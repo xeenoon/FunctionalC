@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "observable.h": "c",
+        "cstdlib": "c",
+        "stdlib.h": "c",
+        "stdio.h": "c",
+        "cstdint": "c",
+        "initializer_list": "c",
+        "time.h": "c",
+        "unistd.h": "c"
+    }
+}
