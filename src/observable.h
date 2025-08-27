@@ -40,6 +40,7 @@ Observable *pipe(Observable *self, int count, ...);
 Query *filter(BooleanFunction boolfunc);
 Query *map(ModifierFunction m);
 Query *scan(AccumulatorFunction accum);
+Query *scanfrom(AccumulatorFunction accum, void* from);
 Query *reduce(AccumulatorFunction accum);
 Query *last();
 Observable *zip(int count, ...);

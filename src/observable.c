@@ -236,6 +236,17 @@ Query *scan(AccumulatorFunction accumulator)
     return q;
 }
 
+Query *scanfrom(AccumulatorFunction accumulator, void *from)
+{
+    ScanCtx *ctx = malloc(sizeof(*ctx));
+    ctx->pred = accumulator;
+    ctx->accum = from;
+    Query *q = malloc(sizeof(*q));
+    q->func = scan_apply;
+    q->ctx = ctx;
+    return q;
+}
+
 static List *reduce_apply(List *data, void *ctx)
 {
     ScanCtx *m = ctx;

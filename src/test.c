@@ -94,6 +94,11 @@ void *hash(void *accum, void *next)
     return (void*)(long)rng_hash((uint32_t)(long)accum);
 }
 
+Observable *createRngStream(Observable * source, int seed)
+{
+    return pipe(source, 2, scanfrom(hash, (void*)(long)seed), map(scale));
+}
+
 int main()
 {
     start_task_system();
@@ -112,11 +117,8 @@ int main()
 
     // subscribe(mergemaptest, printzip);
 
-    Observable *intervaltest = interval(101);
-    // intervaltest = pipe(intervaltest, 3, map(take2), filter(IsEven), scan(add));
-
-    Observable *randomnumberstream = pipe(intervaltest, 2, scan(hash), map(scale));
-    subscribe(randomnumberstream, printfloat);
+    Observable *intervaltest = interval(1000);
+    subscribe(createRngStream(intervaltest, 30), printfloat);
 
     while (true)
     {
