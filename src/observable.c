@@ -212,7 +212,7 @@ static List *scan_apply(List *data, void *ctx)
 {
     ScanCtx *m = ctx;
     List *result = init_list();
-    void *accum = NULL;
+    void *accum = m->accum;
     for (int i = 0; i < data->size; ++i)
     {
         void *item = list_get(data, i);
@@ -220,6 +220,8 @@ static List *scan_apply(List *data, void *ctx)
         push_back(result, r);
         accum = r;
     }
+    m->accum = accum;
+
     return result;
 }
 

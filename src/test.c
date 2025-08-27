@@ -80,7 +80,7 @@ int main()
     //subscribe(mergemaptest, printzip);
 
     Observable *intervaltest = interval(101);
-    intervaltest = pipe(intervaltest, 2, map(take2), filter(IsEven));
+    intervaltest = pipe(intervaltest, 3, map(take2), filter(IsEven), scan(add));
     
     subscribe(intervaltest, printno);
     void (*fp)(void*) = printno;
