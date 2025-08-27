@@ -1,0 +1,10 @@
+# Ignore everything
+*
+
+# Except these
+!.gitignore
+!Makefile
+!/src/
+
+# Ensure contents of /src are included
+/src/*
