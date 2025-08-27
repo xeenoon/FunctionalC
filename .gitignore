@@ -5,6 +5,3 @@
 !.gitignore
 !Makefile
 !/src/
-
-# Ensure contents of /src are included
-/src/*
