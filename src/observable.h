@@ -23,7 +23,7 @@ typedef struct Observable
     List *data;
     Subscriber subscriber;
     Query *emit_handler;
-    List *pipes;
+    Observable *pipe;
 } Observable;
 
 typedef struct Query {

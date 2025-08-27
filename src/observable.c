@@ -10,7 +10,7 @@ Observable *create_observable()
 {
     Observable *o = malloc(sizeof(Observable));
     o->data = init_list();
-    o->pipes = init_list();
+    o->pipe = NULL;
     o->subscriber = NULL;
     o->emit_handler = NULL;
     return o;
@@ -32,35 +32,39 @@ void subscribe(Observable *o, Subscriber subscriber)
 void pop_all(Observable *o)
 {
     List *data = o->data;
-    if (list_isempty(data)) {return;}
+    if (list_isempty(data))
+    {
+        return;
+    }
 
     if (o->emit_handler)
     {
-        //printf("We have an emit handler :D, %d\n", data->size);
-        for(int i = 0; i < data->size; ++i)
+        // printf("We have an emit handler :D, %d\n", data->size);
+        for (int i = 0; i < data->size; ++i)
         {
-            //printf("Found: %d\n", (int)(long)list_get(data, i));
+            // printf("Found: %d\n", (int)(long)list_get(data, i));
         }
         List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
-//        freelist(data);
+
+        Observable *lastpipe = o->pipe;
+        while (lastpipe != NULL && lastpipe->emit_handler)
+        {
+            temp = lastpipe->emit_handler->func(temp, lastpipe->emit_handler->ctx);
+            lastpipe = lastpipe->pipe;
+        }
+        o->data = temp;
         data = temp;
     }
 
-    //printf("Function pointer in popall: %p\n", (void *)o->subscriber);
+    // printf("Function pointer in popall: %p\n", (void *)o->subscriber);
 
     while (!list_isempty(data))
     {
         void *d = popstart(data); // pop from front (FIFO)
-        //printf("Size: %d\n", o->pipes->size);
-        for(int i = 0; i < o->pipes->size; ++i)
-        {
-            Observable *nextlink = (Observable*)list_get(o->pipes, i);
-            push_back(nextlink->data, d);
-            pop_all(nextlink);
-        }
+
         if (!o->subscriber)
         {
-            //printf("No subscriber\n");
+            // printf("No subscriber\n");
             continue;
         }
 
@@ -99,26 +103,16 @@ Observable *interval(long ms)
 
 Observable *pipe(Observable *self, int count, ...)
 {
-    Observable *newObs = create_observable();
-    printf("Function pointer in pipe: %p\n", (void *)newObs->subscriber);
-
-    //Copy all our data over
-    for(int i = 0; i < self->data->size; ++i)
-    {
-        push_back(newObs->data, list_get(self->data, i));
-    }
-
     va_list args;
     va_start(args, count);
 
     Observable *last = self;
     for (int i = 0; i < count; ++i)
     {
-        printf("Added chain link\n");
         void *raw = va_arg(args, void *);
         Observable *next = create_observable();
         last->emit_handler = raw;
-        push_back(last->pipes, next);
+        last->pipe = next;
         last = next;
     }
     va_end(args);

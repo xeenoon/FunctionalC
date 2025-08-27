@@ -9,7 +9,7 @@
 void printno(void *data)
 {
     int item = (int)(long)data;
-    printf("Found: %d\n", item);
+    printf("Outputted: %d\n", item);
 }
 
 bool IsEven(void *v)
@@ -79,8 +79,8 @@ int main()
 
     //subscribe(mergemaptest, printzip);
 
-    Observable *intervaltest = interval(100);
-    intervaltest = pipe(intervaltest, 1, map(take2));
+    Observable *intervaltest = interval(101);
+    intervaltest = pipe(intervaltest, 2, map(take2), filter(IsEven));
     
     subscribe(intervaltest, printno);
     void (*fp)(void*) = printno;
