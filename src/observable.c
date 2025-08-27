@@ -10,7 +10,9 @@ Observable *create_observable()
 {
     Observable *o = malloc(sizeof(Observable));
     o->data = init_list();
-    o->pipe = pipe;
+    o->pipes = init_list();
+    o->subscriber = NULL;
+    o->emit_handler = NULL;
     return o;
 }
 
@@ -23,16 +25,46 @@ void push_observable(Observable *o, void *data)
 void subscribe(Observable *o, Subscriber subscriber)
 {
     o->subscriber = subscriber;
+    printf("Function pointer after subscription: %p\n", (void *)o->subscriber);
     pop_all(o);
 }
 
 void pop_all(Observable *o)
 {
-    List *q = o->data;
-    while (!list_isempty(q))
+    List *data = o->data;
+    if (list_isempty(data)) {return;}
+
+    if (o->emit_handler)
     {
-        void *data = popstart(q); // pop from front (FIFO)
-        o->subscriber(data);
+        //printf("We have an emit handler :D, %d\n", data->size);
+        for(int i = 0; i < data->size; ++i)
+        {
+            //printf("Found: %d\n", (int)(long)list_get(data, i));
+        }
+        List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
+//        freelist(data);
+        data = temp;
+    }
+
+    //printf("Function pointer in popall: %p\n", (void *)o->subscriber);
+
+    while (!list_isempty(data))
+    {
+        void *d = popstart(data); // pop from front (FIFO)
+        //printf("Size: %d\n", o->pipes->size);
+        for(int i = 0; i < o->pipes->size; ++i)
+        {
+            Observable *nextlink = (Observable*)list_get(o->pipes, i);
+            push_back(nextlink->data, d);
+            pop_all(nextlink);
+        }
+        if (!o->subscriber)
+        {
+            //printf("No subscriber\n");
+            continue;
+        }
+
+        o->subscriber(d);
     }
 }
 
@@ -52,7 +84,7 @@ void addnext(void *ctx)
     long ms = ictx->ms;
     ictx->amt++;
     insert_task_in(ms, ctx, addnext);
-    push_observable(ictx->o, (void*)(long)(ictx->ms * ictx->amt));
+    push_observable(ictx->o, (void *)(long)(ictx->ms * ictx->amt));
 }
 Observable *interval(long ms)
 {
@@ -65,32 +97,32 @@ Observable *interval(long ms)
     return result;
 }
 
-Observable *pipe(Observable *self, ...)
+Observable *pipe(Observable *self, int count, ...)
 {
-    Observable *newObs = malloc(sizeof(Observable));
-    newObs->subscriber = NULL;
-    newObs->pipe = self->pipe;
+    Observable *newObs = create_observable();
+    printf("Function pointer in pipe: %p\n", (void *)newObs->subscriber);
+
+    //Copy all our data over
+    for(int i = 0; i < self->data->size; ++i)
+    {
+        push_back(newObs->data, list_get(self->data, i));
+    }
 
     va_list args;
-    va_start(args, self);
+    va_start(args, count);
 
-    List *currdata = self->data;
-
-    while (1)
+    Observable *last = self;
+    for (int i = 0; i < count; ++i)
     {
-        void *raw = va_arg(args, void *); // read as void*
-
-        if (raw == NULL)
-            break;
-        Query *q = (Query *)raw;
-        List *temp = q->func(currdata, q->ctx); // Queries must create a new list
-        freelist(currdata);                     // We are responsible for disposing the old list
-        currdata = temp;
+        printf("Added chain link\n");
+        void *raw = va_arg(args, void *);
+        Observable *next = create_observable();
+        last->emit_handler = raw;
+        push_back(last->pipes, next);
+        last = next;
     }
     va_end(args);
-    newObs->data = currdata;
-
-    return newObs;
+    return self;
 }
 static List *filter_apply(List *data, void *ctx)
 {
@@ -232,6 +264,7 @@ Query *reduce(AccumulatorFunction accumulator)
     Query *q = malloc(sizeof(*q));
     q->func = reduce_apply;
     q->ctx = ctx;
+
     return q;
 }
 

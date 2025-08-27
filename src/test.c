@@ -74,13 +74,16 @@ int main()
     // Observable *observable4 = zip(3, observable, observable2, observable3);
     // observable4 = observable4->pipe(observable4, last(), NULL);
 
-    Observable *mergemaptest = range(11, 20);
-    mergemaptest = mergemaptest->pipe(mergemaptest, mergeMap(observable2), NULL);
+    //Observable *mergemaptest = range(11, 20);
+    //mergemaptest = pipe(mergemaptest, 1, mergeMap(observable2));
 
-    subscribe(mergemaptest, printzip);
+    //subscribe(mergemaptest, printzip);
 
     Observable *intervaltest = interval(100);
+    intervaltest = pipe(intervaltest, 1, map(take2));
+    
     subscribe(intervaltest, printno);
+    void (*fp)(void*) = printno;
 
     while(true)
     {

@@ -4,9 +4,9 @@
 #include "list.h"
 #include <stdarg.h>
 typedef struct Observable Observable;  // forward declaration
+typedef struct Query Query;  // forward declaration
 
 typedef void (*Subscriber)(void *arg);
-typedef Observable* (*ObservableFactory)(Observable *self, ...);
 typedef bool (*BooleanFunction)(void*);
 typedef void* (*ModifierFunction)(void*);
 typedef void* (*AccumulatorFunction)(void*, void*);
@@ -16,12 +16,14 @@ typedef struct { AccumulatorFunction pred; void *accum;} ScanCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ReduceCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
 
+typedef List *(*PipeFunc)(List *data, void *ctx);
+
 typedef struct Observable
 {
     List *data;
     Subscriber subscriber;
-    ObservableFactory pipe; // doesnt work like traditional c++, still requilres
-    BooleanFunction canreturn;
+    Query *emit_handler;
+    List *pipes;
 } Observable;
 
 typedef struct Query {
@@ -34,7 +36,7 @@ void subscribe(Observable *o, Subscriber subscriber);
 void push_observable(Observable *o, void *data);
 void pop_all(Observable *o);
 Observable *range(int min, int max); //Inclusive range
-Observable *pipe(Observable *self, ...);
+Observable *pipe(Observable *self, int count, ...);
 Query *filter(BooleanFunction boolfunc);
 Query *map(ModifierFunction m);
 Query *scan(AccumulatorFunction accum);
