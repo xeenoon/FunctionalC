@@ -5,11 +5,18 @@
 #include "task.h"
 #include "stopwatch.h"
 #include <time.h>
-
+#include "string.h"
 void printno(void *data)
 {
     int item = (int)(long)data;
     printf("Outputted: %d\n", item);
+}
+
+void printfloat(void *data)
+{
+    double item = 0;
+    memcpy(&item, &data, sizeof(void*));
+    printf("Outputted: %f\n", item);
 }
 
 bool IsEven(void *v)
@@ -60,6 +67,32 @@ void sleep_ms(long ms)
     req.tv_nsec = (ms % 1000) * 1000000L;
     nanosleep(&req, NULL);
 }
+static const uint32_t m = 0x80000000; // 2^31
+static const uint32_t a = 1103515245;
+static const uint32_t c = 12345;
+
+// Hash function: returns next integer in [0, m-1]
+uint32_t rng_hash(uint32_t seed)
+{
+    return (a * seed + c) % m;
+}
+
+// Scale function: maps integer hash to float in [-1, 1]
+double rng_scale(uint32_t hash)
+{
+    return (2.0 * hash) / (m - 1) - 1.0;
+}
+
+void *scale(void* hash)
+{
+    void *result = NULL;
+    double hashresult = rng_scale((uint32_t)(long)hash);
+    memcpy(&result, &hashresult, sizeof(void*));
+}
+void *hash(void *accum, void *next)
+{
+    return (void*)(long)rng_hash((uint32_t)(long)accum);
+}
 
 int main()
 {
@@ -74,18 +107,18 @@ int main()
     // Observable *observable4 = zip(3, observable, observable2, observable3);
     // observable4 = observable4->pipe(observable4, last(), NULL);
 
-    //Observable *mergemaptest = range(11, 20);
-    //mergemaptest = pipe(mergemaptest, 1, mergeMap(observable2));
+    // Observable *mergemaptest = range(11, 20);
+    // mergemaptest = pipe(mergemaptest, 1, mergeMap(observable2));
 
-    //subscribe(mergemaptest, printzip);
+    // subscribe(mergemaptest, printzip);
 
     Observable *intervaltest = interval(101);
-    intervaltest = pipe(intervaltest, 3, map(take2), filter(IsEven), scan(add));
-    
-    subscribe(intervaltest, printno);
-    void (*fp)(void*) = printno;
+    // intervaltest = pipe(intervaltest, 3, map(take2), filter(IsEven), scan(add));
 
-    while(true)
+    Observable *randomnumberstream = pipe(intervaltest, 2, scan(hash), map(scale));
+    subscribe(randomnumberstream, printfloat);
+
+    while (true)
     {
         sleep_ms(5);
     }
