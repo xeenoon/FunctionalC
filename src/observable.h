@@ -13,6 +13,7 @@ typedef void* (*AccumulatorFunction)(void*, void*);
 typedef bool (*ComparisonFunction)(void*, void*);
 typedef struct { BooleanFunction pred; } FilterCtx;
 typedef struct { ModifierFunction pred; } MapCtx;
+typedef struct { void *to} MapToCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ScanCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ReduceCtx;
 typedef struct { ComparisonFunction pred; void *endat;} TakeUntilCtx;
@@ -57,6 +58,8 @@ Observable *never();
 Observable *empty();
 Observable *from(List *data);
 Observable *timer(long ms, int period);
+Observable *defer(FactoryFn factory);
+Query *mapTo(void *newitem);
 
 
 #endif

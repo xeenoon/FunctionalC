@@ -40,7 +40,7 @@ void *add(void *accum, void *next)
 {
     return (void *)(long)((int)(long)(accum) + (int)(long)(next));
 }
-
+/*
 void printzip(void *data)
 {
     // We know its a list
@@ -51,7 +51,7 @@ void printzip(void *data)
     }
     printf("\n");
     freelist(aslist);
-}
+}*/
 Stopwatch *gs;
 
 void print_task(void *arg)
@@ -99,7 +99,7 @@ Observable *createRngStream(Observable * source, int seed)
     return pipe(source, 2, scanfrom(hash, (void*)(long)seed), map(scale));
 }
 
-int main()
+int main1()
 {
     start_task_system();
 

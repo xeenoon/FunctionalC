@@ -77,7 +77,6 @@ void subscribe(Observable *o, Subscriber subscriber)
         push_back(o->data, o->on_subscription()); //Pop out a new one
     }
     o->subscriber = subscriber;
-    printf("Function pointer after subscription: %p\n", (void *)o->subscriber);
     pop_all(o);
 }
 bool isStreamComplete(void *item)
@@ -148,13 +147,14 @@ void addnext(void *ctx)
 {
     IntervalCtx *ictx = (IntervalCtx *)ctx;
     long ms = ictx->ms;
+    push_observable(ictx->o, (void *)(long)(ictx->ms * ictx->amt));
+
     if (ms == 0) // Dont need to emit again?
     {
         return;
     }
     ictx->amt++;
     insert_task_in(ms, ctx, addnext);
-    push_observable(ictx->o, (void *)(long)(ictx->ms * ictx->amt));
 }
 Observable *interval(long ms)
 {
@@ -286,6 +286,29 @@ Query *map(ModifierFunction mapper)
     ctx->pred = mapper;
     Query *q = malloc(sizeof(*q));
     q->func = map_apply;
+    q->ctx = ctx;
+    return q;
+}
+static List *mapTo_apply(List *data, void *ctx)
+{
+    MapToCtx *m = ctx;
+    List *result = init_list();
+    for (int i = 0; i < data->size; ++i)
+    {
+        void *item = list_get(data, i);
+        if (isStreamComplete(item))
+        {
+            break;
+        }
+        push_back(result, m->to); //Just overwrite with the to
+    }
+    return result;
+}
+Query *mapTo(void *newitem)
+{
+    MapToCtx *ctx = malloc(sizeof(*ctx));
+    Query *q = malloc(sizeof(*q));
+    q->func = mapTo_apply;
     q->ctx = ctx;
     return q;
 }
