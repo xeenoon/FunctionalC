@@ -301,6 +301,32 @@ Query *take(int number)
     result->ctx = ctx;
     return result;
 }
+
+static List *skip_apply(List *data, void *ctx)
+{
+    TakeCtx *takeCtx = (TakeCtx *)ctx;
+    List *result = init_list();
+    for (int i = 0; i < data->size; ++i)
+    {
+        if (takeCtx->count >= takeCtx->amt)
+        {
+            push_back(result, list_get(data, i));
+        }
+        takeCtx->count++;
+
+    }
+    return result;
+}
+Query *skip(int number)
+{
+    TakeCtx *ctx = malloc(sizeof(TakeCtx));
+    ctx->amt = number;
+    ctx->count = 0;
+    Query *result = malloc(sizeof(Query));
+    result->func = skip_apply;
+    result->ctx = ctx;
+    return result;
+}
 static List *take_while_apply(List *data, void *ctx)
 {
     TakeWhileCtx *takeCtx = (TakeWhileCtx *)ctx;

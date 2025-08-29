@@ -68,6 +68,7 @@ Query *mapTo(void *newitem);
 Query *buffer(Observable *self, Observable *flusher);
 Query *take(int number);
 Query *takeWhile(BooleanFunction func);
+Query *skip(int number);
 
 
 #endif
