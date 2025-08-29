@@ -13,6 +13,50 @@ Observable *create_observable()
     o->pipe = NULL;
     o->subscriber = NULL;
     o->emit_handler = NULL;
+    o->on_subscription = NULL;
+    return o;
+}
+
+Observable *never()
+{
+    return create_observable();
+}
+
+Observable *empty()
+{
+    Observable *o = create_observable();
+    o->complete = true;
+    return o;
+}
+
+Observable *from(List *data)
+{
+    Observable *o = create_observable();
+    freelist(o->data);
+    return o;
+}
+
+Observable *of(int count, ...)
+{
+    Observable *o = malloc(sizeof(Observable));
+    if (!o)
+        return NULL;
+
+    o->data = init_list();
+    o->pipe = NULL;
+    o->subscriber = NULL;
+    o->emit_handler = NULL;
+
+    va_list args;
+    va_start(args, count);
+
+    for (int i = 0; i < count; i++)
+    {
+        void *item = va_arg(args, void *); // read each void*
+        push_back(o->data, item);          // append to list
+    }
+
+    va_end(args);
     return o;
 }
 
@@ -28,6 +72,10 @@ void push_observable(Observable *o, void *data)
 
 void subscribe(Observable *o, Subscriber subscriber)
 {
+    if(o->on_subscription != NULL) //Are we a factory?
+    {
+        push_back(o->data, o->on_subscription()); //Pop out a new one
+    }
     o->subscriber = subscriber;
     printf("Function pointer after subscription: %p\n", (void *)o->subscriber);
     pop_all(o);
@@ -70,7 +118,7 @@ void pop_all(Observable *o)
     while (!list_isempty(data))
     {
         void *d = popstart(data); // pop from front (FIFO)
-        if(isStreamComplete(d))
+        if (isStreamComplete(d))
         {
             o->complete = true;
             return;
@@ -100,6 +148,10 @@ void addnext(void *ctx)
 {
     IntervalCtx *ictx = (IntervalCtx *)ctx;
     long ms = ictx->ms;
+    if (ms == 0) // Dont need to emit again?
+    {
+        return;
+    }
     ictx->amt++;
     insert_task_in(ms, ctx, addnext);
     push_observable(ictx->o, (void *)(long)(ictx->ms * ictx->amt));
@@ -112,6 +164,24 @@ Observable *interval(long ms)
     ctx->o = result;
     ctx->amt = 0;
     insert_task_in(ms, ctx, addnext);
+    return result;
+}
+
+Observable *timer(long ms, int period)
+{
+    Observable *result = create_observable();
+    IntervalCtx *ctx = malloc(sizeof(IntervalCtx));
+    ctx->ms = period;
+    ctx->o = result;
+    ctx->amt = 0;
+    insert_task_in(ms, ctx, addnext);
+    return result;
+}
+
+Observable *defer(FactoryFn factory)
+{
+    Observable *result = create_observable();
+    result->on_subscription = factory;
     return result;
 }
 
@@ -334,7 +404,7 @@ static List *last_apply(List *data, void *unused)
     if (isStreamComplete(list_get(result, 0)))
     {
         pop(result);
-        push_back(result, list_get(data, data->size-2));
+        push_back(result, list_get(data, data->size - 2));
     }
     return result;
 }
@@ -362,11 +432,11 @@ Observable *zip(int count, ...)
     for (int i = 0; i < count; ++i)
     {
         int msize = observables[i]->data->size;
-        if(isStreamComplete(peek(observables[i]->data))) //Last element the complete token?
+        if (isStreamComplete(peek(observables[i]->data))) // Last element the complete token?
         {
-            --msize; //Ignore the token
+            --msize; // Ignore the token
         }
-        
+
         if (msize < shortest)
         {
             shortest = msize;

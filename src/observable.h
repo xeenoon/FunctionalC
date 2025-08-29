@@ -19,6 +19,7 @@ typedef struct { ComparisonFunction pred; void *endat;} TakeUntilCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
 
 typedef List *(*PipeFunc)(List *data, void *ctx);
+typedef Observable *(*FactoryFn)();
 
 typedef struct Observable
 {
@@ -27,6 +28,7 @@ typedef struct Observable
     Subscriber subscriber;
     Query *emit_handler;
     Observable *pipe;
+    FactoryFn on_subscription;
 } Observable;
 
 typedef struct Query {
@@ -50,6 +52,11 @@ Observable *zip(int count, ...);
 Query *mergeMap(Observable *o);
 Observable *interval(long ms);
 Query *takeUntil(void *comp);
+Observable *of(int count, ...);
+Observable *never();
+Observable *empty();
+Observable *from(List *data);
+Observable *timer(long ms, int period);
 
 
 #endif
