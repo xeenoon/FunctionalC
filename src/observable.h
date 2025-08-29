@@ -24,6 +24,7 @@ typedef struct { int count; int amt;} TakeCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
 typedef struct { List *cache; Observable *self;} BufferCtx;
 typedef struct { ModifierFunction pred; List *cache;} DistinctCtx;
+typedef struct { ModifierFunction pred; void *last;} DistinctUntilChangedCtx;
 
 typedef List *(*PipeFunc)(List *data, void *ctx);
 typedef Observable *(*FactoryFn)();
@@ -75,6 +76,6 @@ Query *skip(int number);
 Query *skipWhile(BooleanFunction func);
 Query *skipUntil(void *comp);
 Query *distinct(ModifierFunction comp);
-
+Query *distinctUntilChanged(ModifierFunction comp);
 
 #endif

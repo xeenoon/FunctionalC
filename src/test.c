@@ -98,9 +98,9 @@ Observable *createRngStream(Observable * source, int seed)
 {
     return pipe(source, 2, scanfrom(hash, (void*)(long)seed), map(scale));
 }
-bool lessThan3500(void *item)
+void *lessThan3500(void *item)
 {
-    return (int)(long)item < 3500;
+    return (void*)(long)(int)((int)(long)item < 3500);
 }
 
 void *mod2(void *i)
@@ -129,7 +129,7 @@ int main()
 
     Observable *intervaltest = interval(1001);
     Observable *intervaltest2 = interval(3000);
-    intervaltest = pipe(intervaltest, 2, buffer(intervaltest, intervaltest2), distinct(mod2));
+    intervaltest = pipe(intervaltest, 2, buffer(intervaltest, intervaltest2), distinctUntilChanged(lessThan3500));
     
     //intervaltest = pipe(intervaltest, 1, takeUntil((void*)(long)(2000)));
     subscribe(intervaltest, printno);
