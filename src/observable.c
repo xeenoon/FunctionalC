@@ -201,7 +201,7 @@ Observable *pipe(Observable *self, int count, ...)
     Observable *last = self;
     for (int i = 0; i < count; ++i)
     {
-        void *raw = va_arg(args, void *);
+        void *raw = va_arg(args, Query *);
         Observable *next = create_observable();
         last->emit_handler = raw;
         last->pipe = next;
@@ -261,10 +261,6 @@ bool pointer_comp(void *a, void *b)
 {
     return a == b;
 }
-bool return_true(void *a, void *b)
-{
-    return true;
-}
 Query *takeUntil(void *comp)
 {
     TakeUntilCtx *ctx = malloc(sizeof(TakeUntilCtx));
@@ -274,6 +270,48 @@ Query *takeUntil(void *comp)
     result->func = takeuntil_apply;
     result->ctx = ctx;
     return result;
+}
+
+static List *skipuntil_apply(List *data, void *ctx)
+{
+    SkipUntilCtx *f = ctx;
+    List *result = init_list();
+    for (int i = 0; i < data->size; ++i)
+    {
+        void *item = list_get(data, i);
+        if (isStreamComplete(item))
+        {
+            break;
+        }
+        fflush(stdout);
+
+        if (f->pred(item, f->endat))
+        {
+            f->ended = true;
+        }
+        if (f->ended)
+        {
+            push_back(result, item);
+        }
+    }
+    return result;
+}
+
+Query *skipUntil(void *comp)
+{
+    SkipUntilCtx *ctx = malloc(sizeof(SkipUntilCtx));
+    ctx->pred = pointer_comp;
+    ctx->endat = comp;
+    ctx->ended = false;
+    Query *result = malloc(sizeof(Query));
+    result->func = skipuntil_apply;
+    result->ctx = ctx;
+    return result;
+}
+
+bool return_true(void *a, void *b)
+{
+    return true;
 }
 static List *take_apply(List *data, void *ctx)
 {
@@ -313,7 +351,6 @@ static List *skip_apply(List *data, void *ctx)
             push_back(result, list_get(data, i));
         }
         takeCtx->count++;
-
     }
     return result;
 }
@@ -346,12 +383,42 @@ static List *take_while_apply(List *data, void *ctx)
     return result;
 }
 
+static List *skip_while_apply(List *data, void *ctx)
+{
+    SkipWhileCtx *takeCtx = (SkipWhileCtx *)ctx;
+    List *result = init_list();
+    for (int i = 0; i < data->size; ++i)
+    {
+        if (takeCtx->pred(list_get(data, i)) && !takeCtx->passed)
+        {
+            continue;
+        }
+        else
+        {
+            push_back(result, list_get(data, i));
+            takeCtx->passed = true;
+        }
+    }
+    return result;
+}
 Query *takeWhile(BooleanFunction func)
 {
+
     TakeWhileCtx *ctx = malloc(sizeof(TakeWhileCtx));
     ctx->pred = func;
     Query *result = malloc(sizeof(Query));
     result->func = take_while_apply;
+    result->ctx = ctx;
+    return result;
+}
+
+Query *skipWhile(BooleanFunction func)
+{
+    SkipWhileCtx *ctx = malloc(sizeof(SkipWhileCtx));
+    ctx->passed = false;
+    ctx->pred = func;
+    Query *result = malloc(sizeof(Query));
+    result->func = skip_while_apply;
     result->ctx = ctx;
     return result;
 }

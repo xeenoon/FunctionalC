@@ -13,11 +13,13 @@ typedef void* (*AccumulatorFunction)(void*, void*);
 typedef bool (*ComparisonFunction)(void*, void*);
 typedef struct { BooleanFunction pred; } FilterCtx;
 typedef struct { BooleanFunction pred; } TakeWhileCtx;
+typedef struct { BooleanFunction pred; bool passed;} SkipWhileCtx;
 typedef struct { ModifierFunction pred; } MapCtx;
 typedef struct { void *to} MapToCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ScanCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ReduceCtx;
 typedef struct { ComparisonFunction pred; void *endat;} TakeUntilCtx;
+typedef struct { ComparisonFunction pred; void *endat; bool ended} SkipUntilCtx;
 typedef struct { int count; int amt;} TakeCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
 typedef struct { List *cache; Observable *self;} BufferCtx;
@@ -69,6 +71,8 @@ Query *buffer(Observable *self, Observable *flusher);
 Query *take(int number);
 Query *takeWhile(BooleanFunction func);
 Query *skip(int number);
+Query *skipWhile(BooleanFunction func);
+Query *skipUntil(void *comp);
 
 
 #endif
