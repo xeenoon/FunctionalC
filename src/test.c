@@ -119,7 +119,7 @@ int main()
 
     Observable *intervaltest = interval(1000);
     Observable *intervaltest2 = interval(3000);
-    intervaltest = pipe(intervaltest, 1, buffer(intervaltest, intervaltest2));
+    intervaltest = pipe(intervaltest, 2, buffer(intervaltest, intervaltest2), take(3));
     
     //intervaltest = pipe(intervaltest, 1, takeUntil((void*)(long)(2000)));
     subscribe(intervaltest, printno);

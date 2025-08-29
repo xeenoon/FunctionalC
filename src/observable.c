@@ -256,16 +256,57 @@ static List *takeuntil_apply(List *data, void *ctx)
     }
     return result;
 }
+
 bool pointer_comp(void *a, void *b)
 {
     return a == b;
+}
+bool return_true(void *a, void *b)
+{
+    return true;
 }
 Query *takeUntil(void *comp)
 {
     TakeUntilCtx *ctx = malloc(sizeof(TakeUntilCtx));
     ctx->pred = pointer_comp;
     ctx->endat = comp;
-    printf("Endat: %d\n", (long)ctx->endat);
+    Query *result = malloc(sizeof(Query));
+    result->func = takeuntil_apply;
+    result->ctx = ctx;
+    return result;
+}
+static List *take_apply(List *data, void *ctx)
+{
+    TakeCtx *takeCtx = (TakeCtx *)ctx;
+    List *result = init_list();
+    for(int i = 0; i < data->size; ++i)
+    {
+        takeCtx->count++;
+        push_back(result, list_get(data, i));
+        if(takeCtx->amt == takeCtx->count)
+        {
+            push_back(result, (void*)(long) 0XDEADBEEF);
+            break;
+        }
+    }
+    return result;
+}
+Query *take(int number)
+{
+    TakeCtx *ctx = malloc(sizeof(TakeCtx));
+    ctx->amt = number;
+    ctx->count = 0;
+    Query *result = malloc(sizeof(Query));
+    result->func = take_apply;
+    result->ctx = ctx;
+    return result;
+}
+
+Query *first()
+{
+    TakeUntilCtx *ctx = malloc(sizeof(TakeUntilCtx));
+    ctx->pred = return_true;
+    ctx->endat = NULL;
     Query *result = malloc(sizeof(Query));
     result->func = takeuntil_apply;
     result->ctx = ctx;

@@ -17,6 +17,7 @@ typedef struct { void *to} MapToCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ScanCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ReduceCtx;
 typedef struct { ComparisonFunction pred; void *endat;} TakeUntilCtx;
+typedef struct { int count; int amt;} TakeCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
 typedef struct { List *cache; Observable *self;} BufferCtx;
 
@@ -64,6 +65,7 @@ Observable *timer(long ms, int period);
 Observable *defer(FactoryFn factory);
 Query *mapTo(void *newitem);
 Query *buffer(Observable *self, Observable *flusher);
+Query *take(int number);
 
 
 #endif
