@@ -18,6 +18,7 @@ typedef struct { AccumulatorFunction pred; void *accum;} ScanCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ReduceCtx;
 typedef struct { ComparisonFunction pred; void *endat;} TakeUntilCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
+typedef struct { List *cache; Observable *self;} BufferCtx;
 
 typedef List *(*PipeFunc)(List *data, void *ctx);
 typedef Observable *(*FactoryFn)();
@@ -25,7 +26,9 @@ typedef Observable *(*FactoryFn)();
 typedef struct Observable
 {
     List *data;
+    List *cache;
     bool complete;
+    bool ready;
     Subscriber subscriber;
     Query *emit_handler;
     Observable *pipe;
@@ -60,6 +63,7 @@ Observable *from(List *data);
 Observable *timer(long ms, int period);
 Observable *defer(FactoryFn factory);
 Query *mapTo(void *newitem);
+Query *buffer(Observable *self, Observable *flusher);
 
 
 #endif

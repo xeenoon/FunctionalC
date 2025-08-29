@@ -99,7 +99,7 @@ Observable *createRngStream(Observable * source, int seed)
     return pipe(source, 2, scanfrom(hash, (void*)(long)seed), map(scale));
 }
 
-int main1()
+int main()
 {
     start_task_system();
 
@@ -118,7 +118,10 @@ int main1()
     // subscribe(mergemaptest, printzip);
 
     Observable *intervaltest = interval(1000);
-    intervaltest = pipe(intervaltest, 1, takeUntil((void*)(long)(2000)));
+    Observable *intervaltest2 = interval(3000);
+    intervaltest = pipe(intervaltest, 1, buffer(intervaltest, intervaltest2));
+    
+    //intervaltest = pipe(intervaltest, 1, takeUntil((void*)(long)(2000)));
     subscribe(intervaltest, printno);
     //subscribe(createRngStream(intervaltest, 30), printfloat);
 

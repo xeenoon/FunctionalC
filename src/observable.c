@@ -10,10 +10,12 @@ Observable *create_observable()
 {
     Observable *o = malloc(sizeof(Observable));
     o->data = init_list();
+    o->cache = init_list();
     o->pipe = NULL;
     o->subscriber = NULL;
     o->emit_handler = NULL;
     o->on_subscription = NULL;
+    o->ready = false;
     return o;
 }
 
@@ -94,7 +96,7 @@ void pop_all(Observable *o)
         return;
     }
     List *data = o->data;
-    if (list_isempty(data))
+    if (list_isempty(data) && !o->ready) //We could be buffering, so if we arent ready yet, run the queries to see if we are
     {
         return;
     }
@@ -102,6 +104,7 @@ void pop_all(Observable *o)
     if (o->emit_handler)
     {
         List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
+        
         Observable *lastpipe = o->pipe;
         while (lastpipe != NULL && lastpipe->emit_handler)
         {
@@ -113,6 +116,11 @@ void pop_all(Observable *o)
     }
 
     // printf("Function pointer in popall: %p\n", (void *)o->subscriber);
+
+    if(o->ready)
+    {
+        o->ready = false; //Only ever ready once, wait until we are set to being ready again
+    }
 
     while (!list_isempty(data))
     {
@@ -307,9 +315,56 @@ static List *mapTo_apply(List *data, void *ctx)
 Query *mapTo(void *newitem)
 {
     MapToCtx *ctx = malloc(sizeof(*ctx));
+    ctx->to = newitem;
     Query *q = malloc(sizeof(*q));
     q->func = mapTo_apply;
     q->ctx = ctx;
+    
+    return q;
+}
+
+static List *buffer_apply(List *data, void *ctx)
+{
+    BufferCtx *bctx = (BufferCtx *)ctx;
+    List *cache = bctx->cache;
+    for(int i = 0; i < data->size; ++i)
+    {
+        //printf("Recieved new item\n");
+        push_back(cache, list_get(data, i));
+    }
+    if(bctx->self->ready)
+    {
+        List *result = init_list();
+        int size = bctx->cache->size;
+        for(int i = 0; i < size; ++i)
+        {
+            push_back(result, popstart(bctx->cache));
+        }
+        return result;
+    }
+    List *none = init_list();
+    return none;
+}
+void flush(void *arg)
+{
+    Observable *o = (Observable *)arg;
+    o->ready = true;
+    pop_all(o);
+}
+Query *buffer(Observable *self, Observable *flusher)
+{
+    BufferCtx *ctx = malloc(sizeof(BufferCtx));
+    self->ready = false;
+    ctx->cache = init_list();
+    ctx->self = self;
+
+    Observable *converttopointer = create_observable();
+    converttopointer = pipe(flusher, 1, mapTo(self));
+    subscribe(converttopointer, flush);
+
+    Query *q = malloc(sizeof(Query));
+    q->ctx = ctx;
+    q->func = buffer_apply;
     return q;
 }
 
