@@ -23,6 +23,7 @@ typedef struct { ComparisonFunction pred; void *endat; bool ended} SkipUntilCtx;
 typedef struct { int count; int amt;} TakeCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
 typedef struct { List *cache; Observable *self;} BufferCtx;
+typedef struct { ModifierFunction pred; List *cache;} DistinctCtx;
 
 typedef List *(*PipeFunc)(List *data, void *ctx);
 typedef Observable *(*FactoryFn)();
@@ -73,6 +74,7 @@ Query *takeWhile(BooleanFunction func);
 Query *skip(int number);
 Query *skipWhile(BooleanFunction func);
 Query *skipUntil(void *comp);
+Query *distinct(ModifierFunction comp);
 
 
 #endif

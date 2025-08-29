@@ -308,6 +308,42 @@ Query *skipUntil(void *comp)
     result->ctx = ctx;
     return result;
 }
+static List *distinct_apply(List *data, void *ctx)
+{
+    DistinctCtx *distinctctx = (DistinctCtx *)ctx;
+    List *result = init_list();
+    for(int i = 0; i < data->size; ++i)
+    {
+        void *item1 = distinctctx->pred(list_get(data, i));
+        bool exists = false;
+        for(int j = 0; j < distinctctx->cache->size; ++j)
+        {
+            void *item2 = list_get(distinctctx->cache, j);
+
+            if(item1 == item2)
+            {
+                exists = true;
+                break;
+            }
+        }
+        if(!exists)
+        {
+            push_back(result, list_get(data, i));
+            push_back(distinctctx->cache, item1);
+        }
+    }
+    return result;
+}
+Query *distinct(ModifierFunction comp)
+{
+    DistinctCtx *ctx = malloc(sizeof(DistinctCtx));
+    ctx->cache = init_list();
+    ctx->pred = comp;
+    Query *result = malloc(sizeof(Query));
+    result->func = distinct_apply;
+    result->ctx = ctx;
+    return result;
+}
 
 bool return_true(void *a, void *b)
 {
