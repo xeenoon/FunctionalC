@@ -10,10 +10,12 @@ typedef void (*Subscriber)(void *arg);
 typedef bool (*BooleanFunction)(void*);
 typedef void* (*ModifierFunction)(void*);
 typedef void* (*AccumulatorFunction)(void*, void*);
+typedef bool (*ComparisonFunction)(void*, void*);
 typedef struct { BooleanFunction pred; } FilterCtx;
 typedef struct { ModifierFunction pred; } MapCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ScanCtx;
 typedef struct { AccumulatorFunction pred; void *accum;} ReduceCtx;
+typedef struct { ComparisonFunction pred; void *endat;} TakeUntilCtx;
 typedef struct { Observable *o; long ms; int amt;} IntervalCtx;
 
 typedef List *(*PipeFunc)(List *data, void *ctx);
@@ -21,6 +23,7 @@ typedef List *(*PipeFunc)(List *data, void *ctx);
 typedef struct Observable
 {
     List *data;
+    bool complete;
     Subscriber subscriber;
     Query *emit_handler;
     Observable *pipe;
@@ -46,6 +49,7 @@ Query *last();
 Observable *zip(int count, ...);
 Query *mergeMap(Observable *o);
 Observable *interval(long ms);
+Query *takeUntil(void *comp);
 
 
 #endif

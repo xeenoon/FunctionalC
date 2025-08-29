@@ -118,7 +118,9 @@ int main()
     // subscribe(mergemaptest, printzip);
 
     Observable *intervaltest = interval(1000);
-    subscribe(createRngStream(intervaltest, 30), printfloat);
+    intervaltest = pipe(intervaltest, 1, takeUntil((void*)(long)(2000)));
+    subscribe(intervaltest, printno);
+    //subscribe(createRngStream(intervaltest, 30), printfloat);
 
     while (true)
     {

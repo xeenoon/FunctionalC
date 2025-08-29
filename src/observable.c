@@ -18,6 +18,10 @@ Observable *create_observable()
 
 void push_observable(Observable *o, void *data)
 {
+    if (o->complete)
+    {
+        return;
+    }
     push_back(o->data, data);
     pop_all(o);
 }
@@ -28,9 +32,20 @@ void subscribe(Observable *o, Subscriber subscriber)
     printf("Function pointer after subscription: %p\n", (void *)o->subscriber);
     pop_all(o);
 }
-
+bool isStreamComplete(void *item)
+{
+    if (item == (void *)(long)0XDEADBEEF)
+    {
+        return true;
+    }
+    return false;
+}
 void pop_all(Observable *o)
 {
+    if (o->complete)
+    {
+        return;
+    }
     List *data = o->data;
     if (list_isempty(data))
     {
@@ -39,13 +54,7 @@ void pop_all(Observable *o)
 
     if (o->emit_handler)
     {
-        // printf("We have an emit handler :D, %d\n", data->size);
-        for (int i = 0; i < data->size; ++i)
-        {
-            // printf("Found: %d\n", (int)(long)list_get(data, i));
-        }
         List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
-
         Observable *lastpipe = o->pipe;
         while (lastpipe != NULL && lastpipe->emit_handler)
         {
@@ -61,6 +70,11 @@ void pop_all(Observable *o)
     while (!list_isempty(data))
     {
         void *d = popstart(data); // pop from front (FIFO)
+        if(isStreamComplete(d))
+        {
+            o->complete = true;
+            return;
+        }
 
         if (!o->subscriber)
         {
@@ -143,19 +157,41 @@ Query *filter(BooleanFunction pred)
 
 static List *takeuntil_apply(List *data, void *ctx)
 {
-    FilterCtx *f = ctx;
+    TakeUntilCtx *f = ctx;
     List *result = init_list();
+    printf("applying\n");
     for (int i = 0; i < data->size; ++i)
     {
         void *item = list_get(data, i);
-        if (f->pred(item))
-            push_back(result, item);
+        if (isStreamComplete(item))
+        {
+            break;
+        }
+        printf("Comparing: %d, %d\n", (long)item, (long)f->endat);
+        fflush(stdout);
+        push_back(result, item);
+
+        if (f->pred(item, f->endat))
+        {
+            push_back(result, (void *)(long)0XDEADBEEF); // DEADBEEF cannot be allocated by 64 bit linux or windows kernels
+        }
     }
     return result;
 }
+bool pointer_comp(void *a, void *b)
+{
+    return a == b;
+}
 Query *takeUntil(void *comp)
 {
-    int asint = (int)(long)comp;
+    TakeUntilCtx *ctx = malloc(sizeof(TakeUntilCtx));
+    ctx->pred = pointer_comp;
+    ctx->endat = comp;
+    printf("Endat: %d\n", (long)ctx->endat);
+    Query *result = malloc(sizeof(Query));
+    result->func = takeuntil_apply;
+    result->ctx = ctx;
+    return result;
 }
 
 static List *map_apply(List *data, void *ctx)
@@ -165,6 +201,10 @@ static List *map_apply(List *data, void *ctx)
     for (int i = 0; i < data->size; ++i)
     {
         void *item = list_get(data, i);
+        if (isStreamComplete(item))
+        {
+            break;
+        }
         push_back(result, m->pred(item));
     }
     return result;
@@ -189,6 +229,10 @@ static List *mergemap_apply(List *data, void *ctx)
     {
         // printf("%d items in o->data, %d items in data\n", o->data->size, data->size);
         void *item = list_get(o->data, oi);
+        if (isStreamComplete(item))
+        {
+            break;
+        }
         for (int i = 0; i < data->size; ++i)
         {
             void *start = list_get(data, i);
@@ -216,6 +260,10 @@ static List *scan_apply(List *data, void *ctx)
     for (int i = 0; i < data->size; ++i)
     {
         void *item = list_get(data, i);
+        if (isStreamComplete(item))
+        {
+            break;
+        }
         void *r = m->pred(accum, item);
         push_back(result, r);
         accum = r;
@@ -255,6 +303,10 @@ static List *reduce_apply(List *data, void *ctx)
     for (int i = 0; i < data->size; ++i)
     {
         void *item = list_get(data, i);
+        if (isStreamComplete(item))
+        {
+            break;
+        }
         void *r = m->pred(accum, item);
         accum = r;
     }
@@ -278,7 +330,12 @@ Query *reduce(AccumulatorFunction accumulator)
 static List *last_apply(List *data, void *unused)
 {
     List *result = init_list();
-    push_back(result, pop(data));
+    push_back(result, peek(data));
+    if (isStreamComplete(list_get(result, 0)))
+    {
+        pop(result);
+        push_back(result, list_get(data, data->size-2));
+    }
     return result;
 }
 Query *last()
@@ -305,6 +362,11 @@ Observable *zip(int count, ...)
     for (int i = 0; i < count; ++i)
     {
         int msize = observables[i]->data->size;
+        if(isStreamComplete(peek(observables[i]->data))) //Last element the complete token?
+        {
+            --msize; //Ignore the token
+        }
+        
         if (msize < shortest)
         {
             shortest = msize;

@@ -14,6 +14,7 @@ List *init_list();
 void push_back(List *list,void *item);
 void push_front(List *list, void* item);
 void *pop(List *list);
+void *peek(List *list);
 void *popstart(List *list);
 bool list_isempty(List *list);
 void resize(List *list);

@@ -53,6 +53,15 @@ void *pop(List *list)
     return result;
 }
 
+void *peek(List *list)
+{
+    if (list->size == 0)
+        return NULL;
+    int rear = (list->rear - 1 + list->allocatedsize) % list->allocatedsize;
+    void *result = list->data[rear];
+    return result;
+}
+
 void *popstart(List *list)
 {
     if (list->size == 0)
