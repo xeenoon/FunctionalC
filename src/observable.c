@@ -74,9 +74,9 @@ void push_observable(Observable *o, void *data)
 
 void subscribe(Observable *o, Subscriber subscriber)
 {
-    if(o->on_subscription != NULL) //Are we a factory?
+    if (o->on_subscription != NULL) // Are we a factory?
     {
-        push_back(o->data, o->on_subscription()); //Pop out a new one
+        push_back(o->data, o->on_subscription()); // Pop out a new one
     }
     o->subscriber = subscriber;
     pop_all(o);
@@ -96,7 +96,7 @@ void pop_all(Observable *o)
         return;
     }
     List *data = o->data;
-    if (list_isempty(data) && !o->ready) //We could be buffering, so if we arent ready yet, run the queries to see if we are
+    if (list_isempty(data) && !o->ready) // We could be buffering, so if we arent ready yet, run the queries to see if we are
     {
         return;
     }
@@ -104,7 +104,7 @@ void pop_all(Observable *o)
     if (o->emit_handler)
     {
         List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
-        
+
         Observable *lastpipe = o->pipe;
         while (lastpipe != NULL && lastpipe->emit_handler)
         {
@@ -117,9 +117,9 @@ void pop_all(Observable *o)
 
     // printf("Function pointer in popall: %p\n", (void *)o->subscriber);
 
-    if(o->ready)
+    if (o->ready)
     {
-        o->ready = false; //Only ever ready once, wait until we are set to being ready again
+        o->ready = false; // Only ever ready once, wait until we are set to being ready again
     }
 
     while (!list_isempty(data))
@@ -279,13 +279,13 @@ static List *take_apply(List *data, void *ctx)
 {
     TakeCtx *takeCtx = (TakeCtx *)ctx;
     List *result = init_list();
-    for(int i = 0; i < data->size; ++i)
+    for (int i = 0; i < data->size; ++i)
     {
         takeCtx->count++;
         push_back(result, list_get(data, i));
-        if(takeCtx->amt == takeCtx->count)
+        if (takeCtx->amt == takeCtx->count)
         {
-            push_back(result, (void*)(long) 0XDEADBEEF);
+            push_back(result, (void *)(long)0XDEADBEEF);
             break;
         }
     }
@@ -298,6 +298,34 @@ Query *take(int number)
     ctx->count = 0;
     Query *result = malloc(sizeof(Query));
     result->func = take_apply;
+    result->ctx = ctx;
+    return result;
+}
+static List *take_while_apply(List *data, void *ctx)
+{
+    TakeWhileCtx *takeCtx = (TakeWhileCtx *)ctx;
+    List *result = init_list();
+    for (int i = 0; i < data->size; ++i)
+    {
+        if (takeCtx->pred(list_get(data, i)))
+        {
+            push_back(result, list_get(data, i));
+        }
+        else
+        {
+            push_back(result, (void *)(long)0XDEADBEEF);
+            break;
+        }
+    }
+    return result;
+}
+
+Query *takeWhile(BooleanFunction func)
+{
+    TakeWhileCtx *ctx = malloc(sizeof(TakeWhileCtx));
+    ctx->pred = func;
+    Query *result = malloc(sizeof(Query));
+    result->func = take_while_apply;
     result->ctx = ctx;
     return result;
 }
@@ -349,7 +377,7 @@ static List *mapTo_apply(List *data, void *ctx)
         {
             break;
         }
-        push_back(result, m->to); //Just overwrite with the to
+        push_back(result, m->to); // Just overwrite with the to
     }
     return result;
 }
@@ -360,7 +388,7 @@ Query *mapTo(void *newitem)
     Query *q = malloc(sizeof(*q));
     q->func = mapTo_apply;
     q->ctx = ctx;
-    
+
     return q;
 }
 
@@ -368,16 +396,16 @@ static List *buffer_apply(List *data, void *ctx)
 {
     BufferCtx *bctx = (BufferCtx *)ctx;
     List *cache = bctx->cache;
-    for(int i = 0; i < data->size; ++i)
+    for (int i = 0; i < data->size; ++i)
     {
-        //printf("Recieved new item\n");
+        // printf("Recieved new item\n");
         push_back(cache, list_get(data, i));
     }
-    if(bctx->self->ready)
+    if (bctx->self->ready)
     {
         List *result = init_list();
         int size = bctx->cache->size;
-        for(int i = 0; i < size; ++i)
+        for (int i = 0; i < size; ++i)
         {
             push_back(result, popstart(bctx->cache));
         }
