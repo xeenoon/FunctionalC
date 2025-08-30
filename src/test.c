@@ -109,7 +109,7 @@ void *mod2(void *i)
     return (int)(long)(asint % 2);
 }
 
-int main()
+int main2()
 {
     start_task_system();
 
@@ -127,10 +127,13 @@ int main()
 
     // subscribe(mergemaptest, printzip);
 
-    Observable *intervaltest = interval(1001);
-    Observable *intervaltest2 = interval(3000);
-    intervaltest = pipe(intervaltest, 2, buffer(intervaltest, intervaltest2), distinctUntilChanged(lessThan3500));
+    //Observable *intervaltest = interval(1001);
+    //Observable *intervaltest2 = interval(3000);
+    //intervaltest = pipe(intervaltest, 2, buffer(intervaltest, intervaltest2), distinctUntilChanged(lessThan3500));
     
+    Observable *intervaltest = interval(100);
+    intervaltest = pipe(intervaltest, 1, throttleTime(intervaltest, 250));
+
     //intervaltest = pipe(intervaltest, 1, takeUntil((void*)(long)(2000)));
     subscribe(intervaltest, printno);
     //subscribe(createRngStream(intervaltest, 30), printfloat);

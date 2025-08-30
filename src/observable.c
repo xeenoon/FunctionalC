@@ -474,6 +474,56 @@ Query *takeWhile(BooleanFunction func)
     result->ctx = ctx;
     return result;
 }
+void flushOne(void *args)
+{
+
+    Observable *observable = (Observable *)args;
+    // Remove everything except the last item
+    int size = observable->data->size - 1;
+    for (int i = 0; i < size; ++i)
+    {
+        pop(observable->data);
+    }
+    observable->ready = true;
+    pop_all(observable);
+}
+static List *throttle_time_apply(List *data, void *ctx)
+{
+
+    ThrottleCtx *bctx = (ThrottleCtx *)ctx;
+    if (!bctx->self->ready)
+    {
+        if (data->size >= 1)
+        {
+            bctx->cache = peek(data);
+        }
+        return init_list();
+    }
+    if (bctx->cache != NULL)
+    {
+        List *result = init_list();
+        push_back(result, bctx->cache);
+        bctx->cache = NULL;
+        return result;
+    }
+    return init_list();
+}
+Query *throttleTime(Observable *self, int time)
+{
+    ThrottleCtx *ctx = malloc(sizeof(ThrottleCtx));
+    self->ready = false;
+    ctx->cache = NULL;
+    ctx->self = self;
+
+    Observable *intervalBuffer = interval(time);
+    intervalBuffer = pipe(intervalBuffer, 1, mapTo(self));
+    subscribe(intervalBuffer, flushOne);
+
+    Query *q = malloc(sizeof(Query));
+    q->ctx = ctx;
+    q->func = throttle_time_apply;
+    return q;
+}
 
 Query *skipWhile(BooleanFunction func)
 {
@@ -524,6 +574,7 @@ Query *map(ModifierFunction mapper)
 }
 static List *mapTo_apply(List *data, void *ctx)
 {
+
     MapToCtx *m = ctx;
     List *result = init_list();
     for (int i = 0; i < data->size; ++i)
@@ -531,8 +582,10 @@ static List *mapTo_apply(List *data, void *ctx)
         void *item = list_get(data, i);
         if (isStreamComplete(item))
         {
+
             break;
         }
+
         push_back(result, m->to); // Just overwrite with the to
     }
     return result;
