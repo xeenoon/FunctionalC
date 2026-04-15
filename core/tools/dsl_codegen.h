@@ -5,8 +5,7 @@
 
 #include "dsl_ast.h"
 
-typedef struct
-{
+typedef struct {
     char support_file[260];
     char output_file[260];
     char binary_file[260];

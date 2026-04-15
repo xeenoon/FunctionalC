@@ -3,45 +3,38 @@
 #include <ctype.h>
 #include <string.h>
 
-static void skip_ws(Lexer *lexer)
-{
-    while (lexer->pos < lexer->length && isspace((unsigned char)lexer->source[lexer->pos]))
-    {
+static void skip_ws(Lexer *lexer) {
+    while (lexer->pos < lexer->length &&
+           isspace((unsigned char)lexer->source[lexer->pos])) {
         lexer->pos++;
     }
 }
 
-void lexer_init(Lexer *lexer, const char *source)
-{
+void lexer_init(Lexer *lexer, const char *source) {
     lexer->source = source;
     lexer->length = strlen(source);
     lexer->pos = 0;
     lexer_next(lexer);
 }
 
-void lexer_next(Lexer *lexer)
-{
+void lexer_next(Lexer *lexer) {
     skip_ws(lexer);
     lexer->current.start = lexer->pos;
     lexer->current.end = lexer->pos;
     lexer->current.text[0] = '\0';
 
-    if (lexer->pos >= lexer->length)
-    {
+    if (lexer->pos >= lexer->length) {
         lexer->current.kind = TOK_EOF;
         strcpy(lexer->current.text, "<eof>");
         return;
     }
 
     char ch = lexer->source[lexer->pos];
-    if (isalpha((unsigned char)ch) || ch == '_')
-    {
+    if (isalpha((unsigned char)ch) || ch == '_') {
         size_t start = lexer->pos++;
-        while (lexer->pos < lexer->length)
-        {
+        while (lexer->pos < lexer->length) {
             char next = lexer->source[lexer->pos];
-            if (!isalnum((unsigned char)next) && next != '_')
-            {
+            if (!isalnum((unsigned char)next) && next != '_') {
                 break;
             }
             lexer->pos++;
@@ -50,32 +43,26 @@ void lexer_next(Lexer *lexer)
         memcpy(lexer->current.text, lexer->source + start, len);
         lexer->current.text[len] = '\0';
         lexer->current.kind = TOK_IDENT;
-    }
-    else if (isdigit((unsigned char)ch))
-    {
+    } else if (isdigit((unsigned char)ch)) {
         size_t start = lexer->pos++;
-        while (lexer->pos < lexer->length && isdigit((unsigned char)lexer->source[lexer->pos]))
-        {
+        while (lexer->pos < lexer->length &&
+               isdigit((unsigned char)lexer->source[lexer->pos])) {
             lexer->pos++;
         }
         size_t len = lexer->pos - start;
         memcpy(lexer->current.text, lexer->source + start, len);
         lexer->current.text[len] = '\0';
         lexer->current.kind = TOK_NUMBER;
-    }
-    else if (ch == '=' && lexer->pos + 1 < lexer->length && lexer->source[lexer->pos + 1] == '>')
-    {
+    } else if (ch == '=' && lexer->pos + 1 < lexer->length &&
+               lexer->source[lexer->pos + 1] == '>') {
         lexer->current.kind = TOK_ARROW;
         strcpy(lexer->current.text, "=>");
         lexer->pos += 2;
-    }
-    else
-    {
+    } else {
         lexer->pos++;
         lexer->current.text[0] = ch;
         lexer->current.text[1] = '\0';
-        switch (ch)
-        {
+        switch (ch) {
         case '(':
             lexer->current.kind = TOK_LPAREN;
             break;

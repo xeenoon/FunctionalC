@@ -3,8 +3,7 @@
 
 #include <stddef.h>
 
-typedef enum
-{
+typedef enum {
     TOK_IDENT,
     TOK_NUMBER,
     TOK_LPAREN,
@@ -19,16 +18,14 @@ typedef enum
     TOK_EOF
 } TokenKind;
 
-typedef struct
-{
+typedef struct {
     TokenKind kind;
     char text[64];
     size_t start;
     size_t end;
 } Token;
 
-typedef struct
-{
+typedef struct {
     const char *source;
     size_t length;
     size_t pos;

@@ -6,8 +6,7 @@
 #include <pthread.h>
 #include "task.h"
 
-Observable *create_observable()
-{
+Observable *create_observable() {
     Observable *o = malloc(sizeof(Observable));
     o->data = init_list();
     o->cache = init_list();
@@ -19,27 +18,23 @@ Observable *create_observable()
     return o;
 }
 
-Observable *never()
-{
+Observable *never() {
     return create_observable();
 }
 
-Observable *empty()
-{
+Observable *empty() {
     Observable *o = create_observable();
     o->complete = true;
     return o;
 }
 
-Observable *from(List *data)
-{
+Observable *from(List *data) {
     Observable *o = create_observable();
     freelist(o->data);
     return o;
 }
 
-Observable *of(int count, ...)
-{
+Observable *of(int count, ...) {
     Observable *o = malloc(sizeof(Observable));
     if (!o)
         return NULL;
@@ -52,8 +47,7 @@ Observable *of(int count, ...)
     va_list args;
     va_start(args, count);
 
-    for (int i = 0; i < count; i++)
-    {
+    for (int i = 0; i < count; i++) {
         void *item = va_arg(args, void *); // read each void*
         push_back(o->data, item);          // append to list
     }
@@ -62,18 +56,15 @@ Observable *of(int count, ...)
     return o;
 }
 
-void push_observable(Observable *o, void *data)
-{
-    if (o->complete)
-    {
+void push_observable(Observable *o, void *data) {
+    if (o->complete) {
         return;
     }
     push_back(o->data, data);
     pop_all(o);
 }
 
-void subscribe(Observable *o, Subscriber subscriber)
-{
+void subscribe(Observable *o, Subscriber subscriber) {
     if (o->on_subscription != NULL) // Are we a factory?
     {
         push_back(o->data, o->on_subscription()); // Pop out a new one
@@ -81,38 +72,34 @@ void subscribe(Observable *o, Subscriber subscriber)
     o->subscriber = subscriber;
     pop_all(o);
 }
-bool isStreamComplete(void *item)
-{
-    if (item == (void *)(long)0XDEADBEEF)
-    {
+bool isStreamComplete(void *item) {
+    if (item == (void *)(long)0XDEADBEEF) {
         return true;
     }
     return false;
 }
 
-
-void pop_all(Observable *o)
-{
-    if (o->complete)
-    {
+void pop_all(Observable *o) {
+    if (o->complete) {
         return;
     }
     List *data = o->data;
-    if (list_isempty(data) && !o->ready) // We could be buffering, so if we arent ready yet, run the queries to see if we are
+    if (list_isempty(data) &&
+        !o->ready) // We could be buffering, so if we arent ready yet, run the
+                   // queries to see if we are
     {
         return;
     }
 
-    if (o->emit_handler)
-    {
+    if (o->emit_handler) {
         List *current = data;
         List *temp = o->emit_handler->func(current, o->emit_handler->ctx);
 
         Observable *lastpipe = o->pipe;
-        while (lastpipe != NULL && lastpipe->emit_handler)
-        {
+        while (lastpipe != NULL && lastpipe->emit_handler) {
             current = temp;
-            temp = lastpipe->emit_handler->func(current, lastpipe->emit_handler->ctx);
+            temp = lastpipe->emit_handler->func(current,
+                                                lastpipe->emit_handler->ctx);
             lastpipe = lastpipe->pipe;
         }
         o->data = temp;
@@ -121,22 +108,19 @@ void pop_all(Observable *o)
 
     // printf("Function pointer in popall: %p\n", (void *)o->subscriber);
 
-    if (o->ready)
-    {
-        o->ready = false; // Only ever ready once, wait until we are set to being ready again
+    if (o->ready) {
+        o->ready = false; // Only ever ready once, wait until we are set to
+                          // being ready again
     }
 
-    while (!list_isempty(data))
-    {
+    while (!list_isempty(data)) {
         void *d = popstart(data); // pop from front (FIFO)
-        if (isStreamComplete(d))
-        {
+        if (isStreamComplete(d)) {
             o->complete = true;
             return;
         }
 
-        if (!o->subscriber)
-        {
+        if (!o->subscriber) {
             // printf("No subscriber\n");
             continue;
         }
@@ -148,15 +132,13 @@ void pop_all(Observable *o)
 Observable *range(int min, int max) // Inclusive range
 {
     Observable *result = create_observable();
-    for (int i = min; i < max + 1; ++i)
-    {
+    for (int i = min; i < max + 1; ++i) {
         push_back(result->data, (void *)(long)(i));
     }
     return result;
 }
 
-void addnext(void *ctx)
-{
+void addnext(void *ctx) {
     IntervalCtx *ictx = (IntervalCtx *)ctx;
     long ms = ictx->ms;
     push_observable(ictx->o, (void *)(long)(ictx->ms * ictx->amt));
@@ -168,8 +150,7 @@ void addnext(void *ctx)
     ictx->amt++;
     insert_task_in(ms, ctx, addnext);
 }
-Observable *interval(long ms)
-{
+Observable *interval(long ms) {
     Observable *result = create_observable();
     IntervalCtx *ctx = malloc(sizeof(IntervalCtx));
     ctx->ms = ms;
@@ -179,8 +160,7 @@ Observable *interval(long ms)
     return result;
 }
 
-Observable *timer(long ms, int period)
-{
+Observable *timer(long ms, int period) {
     Observable *result = create_observable();
     IntervalCtx *ctx = malloc(sizeof(IntervalCtx));
     ctx->ms = period;
@@ -190,21 +170,18 @@ Observable *timer(long ms, int period)
     return result;
 }
 
-Observable *defer(FactoryFn factory)
-{
+Observable *defer(FactoryFn factory) {
     Observable *result = create_observable();
     result->on_subscription = factory;
     return result;
 }
 
-Observable *pipe(Observable *self, int count, ...)
-{
+Observable *pipe(Observable *self, int count, ...) {
     va_list args;
     va_start(args, count);
 
     Observable *last = self;
-    for (int i = 0; i < count; ++i)
-    {
+    for (int i = 0; i < count; ++i) {
         void *raw = va_arg(args, Query *);
         Observable *next = create_observable();
         last->emit_handler = raw;
@@ -214,12 +191,10 @@ Observable *pipe(Observable *self, int count, ...)
     va_end(args);
     return self;
 }
-static List *filter_apply(List *data, void *ctx)
-{
+static List *filter_apply(List *data, void *ctx) {
     FilterCtx *f = ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item = list_get(data, i);
         if (f->pred(item))
             push_back(result, item);
@@ -227,8 +202,7 @@ static List *filter_apply(List *data, void *ctx)
     return result;
 }
 
-Query *filter(BooleanFunction pred)
-{
+Query *filter(BooleanFunction pred) {
     FilterCtx *ctx = malloc(sizeof(*ctx));
     ctx->pred = pred;
     Query *q = malloc(sizeof(*q));
@@ -237,36 +211,33 @@ Query *filter(BooleanFunction pred)
     return q;
 }
 
-static List *takeuntil_apply(List *data, void *ctx)
-{
+static List *takeuntil_apply(List *data, void *ctx) {
     TakeUntilCtx *f = ctx;
     List *result = init_list();
     printf("applying\n");
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item = list_get(data, i);
-        if (isStreamComplete(item))
-        {
+        if (isStreamComplete(item)) {
             break;
         }
         printf("Comparing: %d, %d\n", (long)item, (long)f->endat);
         fflush(stdout);
         push_back(result, item);
 
-        if (f->pred(item, f->endat))
-        {
-            push_back(result, (void *)(long)0XDEADBEEF); // DEADBEEF cannot be allocated by 64 bit linux or windows kernels
+        if (f->pred(item, f->endat)) {
+            push_back(
+                result,
+                (void *)(long)0XDEADBEEF); // DEADBEEF cannot be allocated by 64
+                                           // bit linux or windows kernels
         }
     }
     return result;
 }
 
-bool pointer_comp(void *a, void *b)
-{
+bool pointer_comp(void *a, void *b) {
     return a == b;
 }
-Query *takeUntil(void *comp)
-{
+Query *takeUntil(void *comp) {
     TakeUntilCtx *ctx = malloc(sizeof(TakeUntilCtx));
     ctx->pred = pointer_comp;
     ctx->endat = comp;
@@ -276,33 +247,27 @@ Query *takeUntil(void *comp)
     return result;
 }
 
-static List *skipuntil_apply(List *data, void *ctx)
-{
+static List *skipuntil_apply(List *data, void *ctx) {
     SkipUntilCtx *f = ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item = list_get(data, i);
-        if (isStreamComplete(item))
-        {
+        if (isStreamComplete(item)) {
             break;
         }
         fflush(stdout);
 
-        if (f->pred(item, f->endat))
-        {
+        if (f->pred(item, f->endat)) {
             f->ended = true;
         }
-        if (f->ended)
-        {
+        if (f->ended) {
             push_back(result, item);
         }
     }
     return result;
 }
 
-Query *skipUntil(void *comp)
-{
+Query *skipUntil(void *comp) {
     SkipUntilCtx *ctx = malloc(sizeof(SkipUntilCtx));
     ctx->pred = pointer_comp;
     ctx->endat = comp;
@@ -312,34 +277,28 @@ Query *skipUntil(void *comp)
     result->ctx = ctx;
     return result;
 }
-static List *distinct_apply(List *data, void *ctx)
-{
+static List *distinct_apply(List *data, void *ctx) {
     DistinctCtx *distinctctx = (DistinctCtx *)ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item1 = distinctctx->pred(list_get(data, i));
         bool exists = false;
-        for (int j = 0; j < distinctctx->cache->size; ++j)
-        {
+        for (int j = 0; j < distinctctx->cache->size; ++j) {
             void *item2 = list_get(distinctctx->cache, j);
 
-            if (item1 == item2)
-            {
+            if (item1 == item2) {
                 exists = true;
                 break;
             }
         }
-        if (!exists)
-        {
+        if (!exists) {
             push_back(result, list_get(data, i));
             push_back(distinctctx->cache, item1);
         }
     }
     return result;
 }
-Query *distinct(ModifierFunction comp)
-{
+Query *distinct(ModifierFunction comp) {
     DistinctCtx *ctx = malloc(sizeof(DistinctCtx));
     ctx->cache = init_list();
     ctx->pred = comp;
@@ -348,16 +307,13 @@ Query *distinct(ModifierFunction comp)
     result->ctx = ctx;
     return result;
 }
-static List *distinct_until_changed_apply(List *data, void *ctx)
-{
+static List *distinct_until_changed_apply(List *data, void *ctx) {
     DistinctUntilChangedCtx *distinctctx = (DistinctUntilChangedCtx *)ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item1 = distinctctx->pred(list_get(data, i));
         bool exists = false;
-        if (item1 == distinctctx->last)
-        {
+        if (item1 == distinctctx->last) {
             continue;
         }
         distinctctx->last = item1;
@@ -365,8 +321,7 @@ static List *distinct_until_changed_apply(List *data, void *ctx)
     }
     return result;
 }
-Query *distinctUntilChanged(ModifierFunction comp)
-{
+Query *distinctUntilChanged(ModifierFunction comp) {
     DistinctUntilChangedCtx *ctx = malloc(sizeof(DistinctUntilChangedCtx));
     ctx->pred = comp;
     ctx->last = NULL;
@@ -376,28 +331,23 @@ Query *distinctUntilChanged(ModifierFunction comp)
     return result;
 }
 
-bool return_true(void *a, void *b)
-{
+bool return_true(void *a, void *b) {
     return true;
 }
-static List *take_apply(List *data, void *ctx)
-{
+static List *take_apply(List *data, void *ctx) {
     TakeCtx *takeCtx = (TakeCtx *)ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         takeCtx->count++;
         push_back(result, list_get(data, i));
-        if (takeCtx->amt == takeCtx->count)
-        {
+        if (takeCtx->amt == takeCtx->count) {
             push_back(result, (void *)(long)0XDEADBEEF);
             break;
         }
     }
     return result;
 }
-Query *take(int number)
-{
+Query *take(int number) {
     TakeCtx *ctx = malloc(sizeof(TakeCtx));
     ctx->amt = number;
     ctx->count = 0;
@@ -407,22 +357,18 @@ Query *take(int number)
     return result;
 }
 
-static List *skip_apply(List *data, void *ctx)
-{
+static List *skip_apply(List *data, void *ctx) {
     TakeCtx *takeCtx = (TakeCtx *)ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
-        if (takeCtx->count >= takeCtx->amt)
-        {
+    for (int i = 0; i < data->size; ++i) {
+        if (takeCtx->count >= takeCtx->amt) {
             push_back(result, list_get(data, i));
         }
         takeCtx->count++;
     }
     return result;
 }
-Query *skip(int number)
-{
+Query *skip(int number) {
     TakeCtx *ctx = malloc(sizeof(TakeCtx));
     ctx->amt = number;
     ctx->count = 0;
@@ -431,18 +377,13 @@ Query *skip(int number)
     result->ctx = ctx;
     return result;
 }
-static List *take_while_apply(List *data, void *ctx)
-{
+static List *take_while_apply(List *data, void *ctx) {
     TakeWhileCtx *takeCtx = (TakeWhileCtx *)ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
-        if (takeCtx->pred(list_get(data, i)))
-        {
+    for (int i = 0; i < data->size; ++i) {
+        if (takeCtx->pred(list_get(data, i))) {
             push_back(result, list_get(data, i));
-        }
-        else
-        {
+        } else {
             push_back(result, (void *)(long)0XDEADBEEF);
             break;
         }
@@ -450,26 +391,20 @@ static List *take_while_apply(List *data, void *ctx)
     return result;
 }
 
-static List *skip_while_apply(List *data, void *ctx)
-{
+static List *skip_while_apply(List *data, void *ctx) {
     SkipWhileCtx *takeCtx = (SkipWhileCtx *)ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
-        if (takeCtx->pred(list_get(data, i)) && !takeCtx->passed)
-        {
+    for (int i = 0; i < data->size; ++i) {
+        if (takeCtx->pred(list_get(data, i)) && !takeCtx->passed) {
             continue;
-        }
-        else
-        {
+        } else {
             push_back(result, list_get(data, i));
             takeCtx->passed = true;
         }
     }
     return result;
 }
-Query *takeWhile(BooleanFunction func)
-{
+Query *takeWhile(BooleanFunction func) {
 
     TakeWhileCtx *ctx = malloc(sizeof(TakeWhileCtx));
     ctx->pred = func;
@@ -478,33 +413,27 @@ Query *takeWhile(BooleanFunction func)
     result->ctx = ctx;
     return result;
 }
-void flushOne(void *args)
-{
+void flushOne(void *args) {
 
     Observable *observable = (Observable *)args;
     // Remove everything except the last item
     int size = observable->data->size - 1;
-    for (int i = 0; i < size; ++i)
-    {
+    for (int i = 0; i < size; ++i) {
         pop(observable->data);
     }
     observable->ready = true;
     pop_all(observable);
 }
-static List *throttle_time_apply(List *data, void *ctx)
-{
+static List *throttle_time_apply(List *data, void *ctx) {
 
     ThrottleCtx *bctx = (ThrottleCtx *)ctx;
-    if (!bctx->self->ready)
-    {
-        if (data->size >= 1)
-        {
+    if (!bctx->self->ready) {
+        if (data->size >= 1) {
             bctx->cache = peek(data);
         }
         return init_list();
     }
-    if (bctx->cache != NULL)
-    {
+    if (bctx->cache != NULL) {
         List *result = init_list();
         push_back(result, bctx->cache);
         bctx->cache = NULL;
@@ -512,8 +441,7 @@ static List *throttle_time_apply(List *data, void *ctx)
     }
     return init_list();
 }
-Query *throttleTime(Observable *self, int time)
-{
+Query *throttleTime(Observable *self, int time) {
     ThrottleCtx *ctx = malloc(sizeof(ThrottleCtx));
     self->ready = false;
     ctx->cache = NULL;
@@ -529,8 +457,7 @@ Query *throttleTime(Observable *self, int time)
     return q;
 }
 
-Query *skipWhile(BooleanFunction func)
-{
+Query *skipWhile(BooleanFunction func) {
     SkipWhileCtx *ctx = malloc(sizeof(SkipWhileCtx));
     ctx->passed = false;
     ctx->pred = func;
@@ -540,8 +467,7 @@ Query *skipWhile(BooleanFunction func)
     return result;
 }
 
-Query *first()
-{
+Query *first() {
     TakeUntilCtx *ctx = malloc(sizeof(TakeUntilCtx));
     ctx->pred = return_true;
     ctx->endat = NULL;
@@ -551,15 +477,12 @@ Query *first()
     return result;
 }
 
-static List *map_apply(List *data, void *ctx)
-{
+static List *map_apply(List *data, void *ctx) {
     MapCtx *m = ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item = list_get(data, i);
-        if (isStreamComplete(item))
-        {
+        if (isStreamComplete(item)) {
             break;
         }
         push_back(result, m->pred(item));
@@ -567,8 +490,7 @@ static List *map_apply(List *data, void *ctx)
     return result;
 }
 
-Query *map(ModifierFunction mapper)
-{
+Query *map(ModifierFunction mapper) {
     MapCtx *ctx = malloc(sizeof(*ctx));
     ctx->pred = mapper;
     Query *q = malloc(sizeof(*q));
@@ -576,16 +498,13 @@ Query *map(ModifierFunction mapper)
     q->ctx = ctx;
     return q;
 }
-static List *mapTo_apply(List *data, void *ctx)
-{
+static List *mapTo_apply(List *data, void *ctx) {
 
     MapToCtx *m = ctx;
     List *result = init_list();
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item = list_get(data, i);
-        if (isStreamComplete(item))
-        {
+        if (isStreamComplete(item)) {
 
             break;
         }
@@ -594,8 +513,7 @@ static List *mapTo_apply(List *data, void *ctx)
     }
     return result;
 }
-Query *mapTo(void *newitem)
-{
+Query *mapTo(void *newitem) {
     MapToCtx *ctx = malloc(sizeof(*ctx));
     ctx->to = newitem;
     Query *q = malloc(sizeof(*q));
@@ -605,21 +523,17 @@ Query *mapTo(void *newitem)
     return q;
 }
 
-static List *buffer_apply(List *data, void *ctx)
-{
+static List *buffer_apply(List *data, void *ctx) {
     BufferCtx *bctx = (BufferCtx *)ctx;
     List *cache = bctx->cache;
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         // printf("Recieved new item\n");
         push_back(cache, list_get(data, i));
     }
-    if (bctx->self->ready)
-    {
+    if (bctx->self->ready) {
         List *result = init_list();
         int size = bctx->cache->size;
-        for (int i = 0; i < size; ++i)
-        {
+        for (int i = 0; i < size; ++i) {
             push_back(result, popstart(bctx->cache));
         }
         return result;
@@ -627,14 +541,12 @@ static List *buffer_apply(List *data, void *ctx)
     List *none = init_list();
     return none;
 }
-void flush(void *arg)
-{
+void flush(void *arg) {
     Observable *o = (Observable *)arg;
     o->ready = true;
     pop_all(o);
 }
-Query *buffer(Observable *self, Observable *flusher)
-{
+Query *buffer(Observable *self, Observable *flusher) {
     BufferCtx *ctx = malloc(sizeof(BufferCtx));
     self->ready = false;
     ctx->cache = init_list();
@@ -650,21 +562,18 @@ Query *buffer(Observable *self, Observable *flusher)
     return q;
 }
 
-static List *mergemap_apply(List *data, void *ctx)
-{
+static List *mergemap_apply(List *data, void *ctx) {
     List *result = init_list();
     Observable *o = (Observable *)ctx;
 
-    for (int oi = 0; oi < o->data->size; ++oi)
-    {
-        // printf("%d items in o->data, %d items in data\n", o->data->size, data->size);
+    for (int oi = 0; oi < o->data->size; ++oi) {
+        // printf("%d items in o->data, %d items in data\n", o->data->size,
+        // data->size);
         void *item = list_get(o->data, oi);
-        if (isStreamComplete(item))
-        {
+        if (isStreamComplete(item)) {
             break;
         }
-        for (int i = 0; i < data->size; ++i)
-        {
+        for (int i = 0; i < data->size; ++i) {
             void *start = list_get(data, i);
             List *line = init_list();
             push_back(line, start);
@@ -674,24 +583,20 @@ static List *mergemap_apply(List *data, void *ctx)
     }
     return result;
 }
-Query *mergeMap(Observable *o)
-{
+Query *mergeMap(Observable *o) {
     Query *q = malloc(sizeof(*q));
     q->func = mergemap_apply;
     q->ctx = o; // No context required
     return q;
 }
 
-static List *scan_apply(List *data, void *ctx)
-{
+static List *scan_apply(List *data, void *ctx) {
     ScanCtx *m = ctx;
     List *result = init_list();
     void *accum = m->accum;
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item = list_get(data, i);
-        if (isStreamComplete(item))
-        {
+        if (isStreamComplete(item)) {
             break;
         }
         void *r = m->pred(accum, item);
@@ -703,8 +608,7 @@ static List *scan_apply(List *data, void *ctx)
     return result;
 }
 
-Query *scan(AccumulatorFunction accumulator)
-{
+Query *scan(AccumulatorFunction accumulator) {
     ScanCtx *ctx = malloc(sizeof(*ctx));
     ctx->pred = accumulator;
     ctx->accum = NULL; // Handily also stores as 0 for integer ptr conversions
@@ -714,8 +618,7 @@ Query *scan(AccumulatorFunction accumulator)
     return q;
 }
 
-Query *scanfrom(AccumulatorFunction accumulator, void *from)
-{
+Query *scanfrom(AccumulatorFunction accumulator, void *from) {
     ScanCtx *ctx = malloc(sizeof(*ctx));
     ctx->pred = accumulator;
     ctx->accum = from;
@@ -725,16 +628,13 @@ Query *scanfrom(AccumulatorFunction accumulator, void *from)
     return q;
 }
 
-static List *reduce_apply(List *data, void *ctx)
-{
+static List *reduce_apply(List *data, void *ctx) {
     ScanCtx *m = ctx;
     List *result = init_list();
     void *accum = NULL;
-    for (int i = 0; i < data->size; ++i)
-    {
+    for (int i = 0; i < data->size; ++i) {
         void *item = list_get(data, i);
-        if (isStreamComplete(item))
-        {
+        if (isStreamComplete(item)) {
             break;
         }
         void *r = m->pred(accum, item);
@@ -745,8 +645,7 @@ static List *reduce_apply(List *data, void *ctx)
     return result;
 }
 
-Query *reduce(AccumulatorFunction accumulator)
-{
+Query *reduce(AccumulatorFunction accumulator) {
     ScanCtx *ctx = malloc(sizeof(*ctx));
     ctx->pred = accumulator;
     ctx->accum = NULL; // Handily also stores as 0 for integer ptr conversions
@@ -757,62 +656,53 @@ Query *reduce(AccumulatorFunction accumulator)
     return q;
 }
 
-static List *last_apply(List *data, void *unused)
-{
+static List *last_apply(List *data, void *unused) {
     List *result = init_list();
     push_back(result, peek(data));
-    if (isStreamComplete(list_get(result, 0)))
-    {
+    if (isStreamComplete(list_get(result, 0))) {
         pop(result);
         push_back(result, list_get(data, data->size - 2));
     }
     return result;
 }
-Query *last()
-{
+Query *last() {
     Query *q = malloc(sizeof(*q));
     q->func = last_apply;
     q->ctx = NULL;
     return q;
 }
 
-Observable *zip(int count, ...)
-{
+Observable *zip(int count, ...) {
     va_list args;
     va_start(args, count);
 
     Observable **observables = malloc(sizeof(Observable *) * count);
-    for (int i = 0; i < count; ++i)
-    {
+    for (int i = 0; i < count; ++i) {
         observables[i] = va_arg(args, Observable *);
     }
     va_end(args);
 
     int shortest = INT32_MAX;
-    for (int i = 0; i < count; ++i)
-    {
+    for (int i = 0; i < count; ++i) {
         int msize = observables[i]->data->size;
-        if (isStreamComplete(peek(observables[i]->data))) // Last element the complete token?
+        if (isStreamComplete(
+                peek(observables[i]->data))) // Last element the complete token?
         {
             --msize; // Ignore the token
         }
 
-        if (msize < shortest)
-        {
+        if (msize < shortest) {
             shortest = msize;
         }
     }
 
     Observable *result = create_observable();
-    for (int i = 0; i < shortest; ++i)
-    {
+    for (int i = 0; i < shortest; ++i) {
         List *zipped = init_list();
-        for (int j = 0; j < count; ++j)
-        {
+        for (int j = 0; j < count; ++j) {
             push_back(zipped, list_get(observables[j]->data, i));
         }
         push_back(result->data, zipped);
     }
     return result;
 }
-

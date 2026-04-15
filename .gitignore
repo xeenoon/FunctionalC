@@ -38,3 +38,6 @@ node_modules/
 *_O1
 *_O2
 *_O3
+
+# Coding agents
+.codex

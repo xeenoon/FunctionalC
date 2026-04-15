@@ -6,21 +6,25 @@
 
 static long result_sum = 0;
 
-void accumulate(void *v) { result_sum = (long)v; }
+void accumulate(void *v) {
+    result_sum = (long)v;
+}
 
 void *square(void *v) {
     long x = (long)v;
     return (void *)(x * x);
 }
 
-bool isEven_pred(void *v) { return ((long)v) % 2 == 0; }
+bool isEven_pred(void *v) {
+    return ((long)v) % 2 == 0;
+}
 
 void *add(void *accum, void *next) {
     return (void *)((long)accum + (long)next);
 }
 
 int main(int argc, char *argv[]) {
-    int N    = argc > 1 ? atoi(argv[1]) : 1000000;
+    int N = argc > 1 ? atoi(argv[1]) : 1000000;
     int RUNS = argc > 2 ? atoi(argv[2]) : 5;
     long total_ns = 0;
 
