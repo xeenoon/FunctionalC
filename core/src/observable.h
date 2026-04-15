@@ -6,6 +6,14 @@
 typedef struct Observable Observable;  // forward declaration
 typedef struct Query Query;  // forward declaration
 
+typedef enum
+{
+    QUERY_KIND_GENERIC = 0,
+    QUERY_KIND_FILTER,
+    QUERY_KIND_MAP,
+    QUERY_KIND_REDUCE
+} QueryKind;
+
 typedef void (*Subscriber)(void *arg);
 typedef bool (*BooleanFunction)(void*);
 typedef void* (*ModifierFunction)(void*);
@@ -45,6 +53,7 @@ typedef struct Observable
 typedef struct Query {
     List *(*func)(List *data, void *ctx);
     void *ctx;
+    QueryKind kind;
 } Query;
 
 Observable *create_observable();

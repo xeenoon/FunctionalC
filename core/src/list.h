@@ -11,6 +11,8 @@ typedef struct List
 }List;
 
 List *init_list();
+List *init_list_with_capacity(int capacity);
+void list_reserve(List *list, int capacity);
 void push_back(List *list,void *item);
 void push_front(List *list, void* item);
 void *pop(List *list);

@@ -1,7 +1,28 @@
-# Ignore everything
-*
+# Project layout:
+#   /core/src     runtime sources
+#   /core/tools   compiler/codegen sources
+#   /testdata     checked-in DSL examples
+#   /out          generated C, binaries, and benchmark outputs
 
-# Except these
-!.gitignore
-!Makefile
-!/src/
+# Native build outputs
+*.dll
+*.obj
+*.o
+*.out
+*.a
+*.lib
+*.pdb
+
+# Root-level historical artifacts
+*.exe
+generated_*.c
+
+# Generated output directory
+/out/*
+!/out/.gitkeep
+
+# Common temp files
+*.tmp
+*.log
+*.bak
+*.orig
