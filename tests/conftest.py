@@ -1,7 +1,7 @@
 import subprocess
 import pytest
 from pathlib import Path
-from models import BenchmarkResult
+from models import BenchmarkResult, Scenario
 
 BENCH_DIR = Path(__file__).parent.parent / 'benchmarks'
 
@@ -17,7 +17,7 @@ def install_npm():
 def compile_c():
     _cache = {}
 
-    def _compile(scenario, opt='O2'):
+    def _compile(scenario: Scenario, opt='O2'):
         key = (scenario, opt)
         if key not in _cache:
             subprocess.run(
@@ -34,7 +34,7 @@ def compile_c():
 
 @pytest.fixture(scope='session')
 def run_c(compile_c):
-    def _run(scenario, opt='O2', n=1_000_000, runs=5):
+    def _run(scenario: Scenario, opt='O2', n=1_000_000, runs=5):
         binary = compile_c(scenario, opt)
         stdout = subprocess.run(
             [str(binary), str(n), str(runs)],
@@ -49,7 +49,7 @@ def run_c(compile_c):
 
 @pytest.fixture(scope='session')
 def run_js():
-    def _run(scenario, n=1_000_000, runs=5):
+    def _run(scenario: Scenario, n=1_000_000, runs=5):
         stdout = subprocess.run(
             ['node', f'{scenario}.js', str(n), str(runs)],
             cwd=BENCH_DIR,

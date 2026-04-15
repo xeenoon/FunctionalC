@@ -1,7 +1,6 @@
-from models import BenchmarkResult
+from models import BenchmarkResult, Scenario
 
-
-SCENARIO = 'map_filter_reduce'
+SCENARIO = Scenario.map_filter_reduce
 EXPECTED = 166_667_166_667_000_000
 
 

@@ -1,5 +1,10 @@
 from dataclasses import dataclass
+from enum import StrEnum
 import json
+
+
+class Scenario(StrEnum):
+    map_filter_reduce = 'map_filter_reduce'
 
 
 @dataclass
