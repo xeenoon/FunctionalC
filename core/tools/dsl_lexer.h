@@ -7,6 +7,7 @@ typedef enum
 {
     TOK_IDENT,
     TOK_NUMBER,
+    TOK_COMMENT,
     TOK_LPAREN,
     TOK_RPAREN,
     TOK_LBRACE,

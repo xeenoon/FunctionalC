@@ -1,5 +1,7 @@
 #include "dsl_codegen.h"
 #include "dsl_parser.h"
+#include "lowering.h"
+#include "planner.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,7 +50,9 @@ static bool parse_define_arg(const char *text, char *name, size_t name_size, cha
 int main(int argc, char **argv)
 {
     CodegenOptions options;
-    Program program;
+    ProgramAst program_ast;
+    ProgramIr program_ir;
+    ExecutionPlan plan;
     memset(&options, 0, sizeof(options));
     strcpy(options.output_file, "out/generated_pipeline.c");
     strcpy(options.binary_file, "out/generated_pipeline.exe");
@@ -114,23 +118,33 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!parse_program_text(dsl_source, &program))
+    if (!parse_program_text(dsl_source, &program_ast))
     {
         free(dsl_source);
         return 1;
     }
     free(dsl_source);
 
-    if (!emit_program_c(&program, &options))
+    if (!lower_program(&program_ast, &program_ir))
+    {
+        return 1;
+    }
+
+    if (!build_execution_plan(&program_ir, &plan))
+    {
+        return 1;
+    }
+
+    if (!emit_program_c(&plan, &options))
     {
         fprintf(stderr, "failed to write %s\n", options.output_file);
         return 1;
     }
 
-    printf("generated %s with %d chain(s)\n", options.output_file, program.chain_count);
-    for (int i = 0; i < program.chain_count; ++i)
+    printf("generated %s with %d chain(s)\n", options.output_file, plan.chain_count);
+    for (int i = 0; i < plan.chain_count; ++i)
     {
-        printf("  call_%02X\n", i);
+        printf("  call_%02X [%s]\n", i, plan.chains[i].backend == BACKEND_FUSED ? "fused" : "runtime");
     }
 
     if (options.compile_generated)

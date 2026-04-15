@@ -25,36 +25,25 @@ Invoke-Step "Build DSL Compiler" {
         core/tools/dsl_lexer.c `
         core/tools/dsl_parser.c `
         core/tools/dsl_codegen.c `
+        core/tools/operator_registry.c `
+        core/tools/lowering.c `
+        core/tools/planner.c `
         -o out/pipeline_codegen.exe
 }
 
-$benchmarks = @(
-    @{
-        Name = "map-filter-reduce"
-        Dsl = "testdata/benchmark.dsl"
-        OutC = "out/generated_benchmark.c"
-        OutExe = "out/generated_benchmark.exe"
-    },
-    @{
-        Name = "map-take-reduce"
-        Dsl = "testdata/benchmark_take.dsl"
-        OutC = "out/generated_take.c"
-        OutExe = "out/generated_take.exe"
-    },
-    @{
-        Name = "filter-take"
-        Dsl = "testdata/benchmark_filter.dsl"
-        OutC = "out/generated_filter.c"
-        OutExe = "out/generated_filter.exe"
-    }
-)
+$benchmarks = Get-ChildItem -Path testdata -Recurse -File -Filter *.dsl | Sort-Object FullName
 
 foreach ($bench in $benchmarks) {
-    Invoke-Step "Run $($bench.Name)" {
+    $relative = $bench.FullName.Substring($root.Length + 1).Replace('\', '_').Replace('/', '_')
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($relative)
+    $outC = "out/generated_$baseName.c"
+    $outExe = "out/generated_$baseName.exe"
+
+    Invoke-Step "Run $($bench.FullName.Substring($root.Length + 1))" {
         .\out\pipeline_codegen.exe `
-            --dsl $bench.Dsl `
-            --output $bench.OutC `
-            --binary $bench.OutExe `
+            --dsl $bench.FullName `
+            --output $outC `
+            --binary $outExe `
             --define N=1000000 `
             --runs 5 `
             --compile `

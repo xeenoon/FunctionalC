@@ -3,6 +3,6 @@
 
 #include "dsl_ast.h"
 
-bool parse_program_text(const char *source, Program *program);
+bool parse_program_text(const char *source, ProgramAst *program);
 
 #endif

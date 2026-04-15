@@ -30,34 +30,74 @@ typedef struct
 
 typedef enum
 {
+    SOURCE_RANGE,
+    SOURCE_OF,
+    SOURCE_EMPTY,
+    SOURCE_NEVER,
+    SOURCE_INTERVAL,
+    SOURCE_TIMER,
+    SOURCE_DEFER,
+    SOURCE_FROM,
+    SOURCE_ZIP
+} SourceKind;
+
+typedef struct SourceAst SourceAst;
+
+struct SourceAst
+{
+    SourceKind kind;
+    char values[8][64];
+    int value_count;
+    SourceAst *sources[8];
+    int source_count;
+};
+
+typedef enum
+{
     OP_MAP,
     OP_FILTER,
     OP_REDUCE,
-    OP_TAKE
+    OP_SCAN,
+    OP_SCANFROM,
+    OP_MAP_TO,
+    OP_TAKE,
+    OP_SKIP,
+    OP_TAKE_WHILE,
+    OP_SKIP_WHILE,
+    OP_DISTINCT,
+    OP_DISTINCT_UNTIL_CHANGED,
+    OP_TAKE_UNTIL,
+    OP_SKIP_UNTIL,
+    OP_LAST,
+    OP_FIRST,
+    OP_MERGE_MAP,
+    OP_BUFFER,
+    OP_THROTTLE_TIME
 } OperatorKind;
 
 typedef struct
 {
     OperatorKind kind;
-    char function_name[64];
-    char literal[64];
-} Operator;
+    char symbol[64];
+    char extra[64];
+    SourceAst *source_arg;
+    bool has_extra;
+} OperatorAst;
 
 typedef struct
 {
-    char range_min[64];
-    char range_max[64];
-    Operator ops[16];
+    SourceAst *source;
+    OperatorAst ops[32];
     int op_count;
     char subscriber_target[64];
-} Chain;
+} ChainAst;
 
 typedef struct
 {
     FnDef functions[64];
     int function_count;
-    Chain chains[32];
+    ChainAst chains[32];
     int chain_count;
-} Program;
+} ProgramAst;
 
 #endif

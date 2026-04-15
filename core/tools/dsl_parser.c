@@ -1,6 +1,7 @@
 #include "dsl_parser.h"
 
 #include "dsl_lexer.h"
+#include "operator_registry.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,13 @@ static Expr *new_expr(ExprKind kind, const char *text)
         strncpy(expr->text, text, sizeof(expr->text) - 1);
     }
     return expr;
+}
+
+static SourceAst *new_source(SourceKind kind)
+{
+    SourceAst *source = (SourceAst *)calloc(1, sizeof(SourceAst));
+    source->kind = kind;
+    return source;
 }
 
 static bool accept(Parser *parser, TokenKind kind)
@@ -47,6 +55,18 @@ static bool expect_ident(Parser *parser, char *out, size_t out_size)
     if (parser->lexer.current.kind != TOK_IDENT)
     {
         fprintf(stderr, "parse error: expected identifier, got '%s'\n", parser->lexer.current.text);
+        return false;
+    }
+    strncpy(out, parser->lexer.current.text, out_size - 1);
+    lexer_next(&parser->lexer);
+    return true;
+}
+
+static bool expect_value(Parser *parser, char *out, size_t out_size)
+{
+    if (parser->lexer.current.kind != TOK_IDENT && parser->lexer.current.kind != TOK_NUMBER)
+    {
+        fprintf(stderr, "parse error: expected value, got '%s'\n", parser->lexer.current.text);
         return false;
     }
     strncpy(out, parser->lexer.current.text, out_size - 1);
@@ -108,12 +128,7 @@ static Expr *parse_expr(Parser *parser)
 
 static bool parse_fn_def(Parser *parser, FnDef *fn)
 {
-    if (strcmp(parser->lexer.current.text, "fn") != 0)
-    {
-        return false;
-    }
     lexer_next(&parser->lexer);
-
     if (!expect_ident(parser, fn->name, sizeof(fn->name)) || !expect(parser, TOK_LPAREN, "'('"))
     {
         return false;
@@ -159,7 +174,103 @@ static bool parse_fn_def(Parser *parser, FnDef *fn)
     return expect(parser, TOK_SEMI, "';'") && expect(parser, TOK_RBRACE, "'}'");
 }
 
-static bool parse_operator(Parser *parser, Operator *op)
+static SourceAst *parse_source(Parser *parser);
+
+static bool parse_source_arg_list(Parser *parser, SourceAst *source, bool nested_sources)
+{
+    if (accept(parser, TOK_RPAREN))
+    {
+        return true;
+    }
+
+    while (true)
+    {
+        if (nested_sources && parser->lexer.current.kind == TOK_IDENT)
+        {
+            const char *name = parser->lexer.current.text;
+            if (strcmp(name, "range") == 0 || strcmp(name, "of") == 0 || strcmp(name, "empty") == 0 ||
+                strcmp(name, "never") == 0 || strcmp(name, "interval") == 0 || strcmp(name, "timer") == 0 ||
+                strcmp(name, "defer") == 0 || strcmp(name, "from") == 0 || strcmp(name, "zip") == 0)
+            {
+                if (source->source_count >= 8)
+                {
+                    return false;
+                }
+                source->sources[source->source_count++] = parse_source(parser);
+                if (source->sources[source->source_count - 1] == NULL)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                if (source->value_count >= 8 || !expect_value(parser, source->values[source->value_count], sizeof(source->values[source->value_count])))
+                {
+                    return false;
+                }
+                source->value_count++;
+            }
+        }
+        else
+        {
+            if (source->value_count >= 8 || !expect_value(parser, source->values[source->value_count], sizeof(source->values[source->value_count])))
+            {
+                return false;
+            }
+            source->value_count++;
+        }
+
+        if (accept(parser, TOK_COMMA))
+        {
+            continue;
+        }
+        return expect(parser, TOK_RPAREN, "')'");
+    }
+}
+
+static SourceAst *parse_source(Parser *parser)
+{
+    char name[64];
+    SourceKind kind;
+
+    if (!expect_ident(parser, name, sizeof(name)))
+    {
+        return NULL;
+    }
+
+    if (strcmp(name, "range") == 0) kind = SOURCE_RANGE;
+    else if (strcmp(name, "of") == 0) kind = SOURCE_OF;
+    else if (strcmp(name, "empty") == 0) kind = SOURCE_EMPTY;
+    else if (strcmp(name, "never") == 0) kind = SOURCE_NEVER;
+    else if (strcmp(name, "interval") == 0) kind = SOURCE_INTERVAL;
+    else if (strcmp(name, "timer") == 0) kind = SOURCE_TIMER;
+    else if (strcmp(name, "defer") == 0) kind = SOURCE_DEFER;
+    else if (strcmp(name, "from") == 0) kind = SOURCE_FROM;
+    else if (strcmp(name, "zip") == 0) kind = SOURCE_ZIP;
+    else
+    {
+        fprintf(stderr, "parse error: unsupported source '%s'\n", name);
+        return NULL;
+    }
+
+    if (!expect(parser, TOK_LPAREN, "'('"))
+    {
+        return NULL;
+    }
+
+    SourceAst *source = new_source(kind);
+    if (source == NULL)
+    {
+        return NULL;
+    }
+    if (!parse_source_arg_list(parser, source, kind == SOURCE_ZIP))
+    {
+        return NULL;
+    }
+    return source;
+}
+
+static bool parse_operator(Parser *parser, OperatorAst *op)
 {
     char name[64];
     if (!expect_ident(parser, name, sizeof(name)) || !expect(parser, TOK_LPAREN, "'('"))
@@ -167,159 +278,149 @@ static bool parse_operator(Parser *parser, Operator *op)
         return false;
     }
 
-    if (strcmp(name, "map") == 0)
+    const OperatorInfo *info = find_operator_info_by_name(name);
+    if (info == NULL)
     {
-        op->kind = OP_MAP;
-        if (!expect_ident(parser, op->function_name, sizeof(op->function_name)))
-        {
-            return false;
-        }
-        return expect(parser, TOK_RPAREN, "')'");
-    }
-    if (strcmp(name, "filter") == 0)
-    {
-        op->kind = OP_FILTER;
-        if (!expect_ident(parser, op->function_name, sizeof(op->function_name)))
-        {
-            return false;
-        }
-        return expect(parser, TOK_RPAREN, "')'");
-    }
-    if (strcmp(name, "reduce") == 0)
-    {
-        op->kind = OP_REDUCE;
-        if (!expect_ident(parser, op->function_name, sizeof(op->function_name)) || !expect(parser, TOK_COMMA, "','"))
-        {
-            return false;
-        }
-        if (parser->lexer.current.kind != TOK_NUMBER && parser->lexer.current.kind != TOK_IDENT)
-        {
-            fprintf(stderr, "parse error: expected reduce init literal\n");
-            return false;
-        }
-        strncpy(op->literal, parser->lexer.current.text, sizeof(op->literal) - 1);
-        lexer_next(&parser->lexer);
-        return expect(parser, TOK_RPAREN, "')'");
-    }
-    if (strcmp(name, "take") == 0)
-    {
-        op->kind = OP_TAKE;
-        if (parser->lexer.current.kind != TOK_NUMBER && parser->lexer.current.kind != TOK_IDENT)
-        {
-            fprintf(stderr, "parse error: expected take literal\n");
-            return false;
-        }
-        strncpy(op->literal, parser->lexer.current.text, sizeof(op->literal) - 1);
-        lexer_next(&parser->lexer);
-        return expect(parser, TOK_RPAREN, "')'");
+        fprintf(stderr, "parse error: unsupported operator '%s'\n", name);
+        return false;
     }
 
-    fprintf(stderr, "parse error: unsupported operator '%s'\n", name);
+    memset(op, 0, sizeof(*op));
+    op->kind = info->kind;
+
+    switch (info->argument_kind)
+    {
+    case ARGUMENT_NONE:
+        return expect(parser, TOK_RPAREN, "')'");
+    case ARGUMENT_FUNCTION:
+        if (!expect_ident(parser, op->symbol, sizeof(op->symbol)))
+        {
+            return false;
+        }
+        return expect(parser, TOK_RPAREN, "')'");
+    case ARGUMENT_LITERAL:
+        if (!expect_value(parser, op->extra, sizeof(op->extra)))
+        {
+            return false;
+        }
+        op->has_extra = true;
+        return expect(parser, TOK_RPAREN, "')'");
+    case ARGUMENT_FUNCTION_AND_LITERAL:
+        if (!expect_ident(parser, op->symbol, sizeof(op->symbol)))
+        {
+            return false;
+        }
+        if (accept(parser, TOK_COMMA))
+        {
+            if (!expect_value(parser, op->extra, sizeof(op->extra)))
+            {
+                return false;
+            }
+            op->has_extra = true;
+        }
+        return expect(parser, TOK_RPAREN, "')'");
+    case ARGUMENT_SOURCE:
+        op->source_arg = parse_source(parser);
+        if (op->source_arg == NULL)
+        {
+            return false;
+        }
+        return expect(parser, TOK_RPAREN, "')'");
+    }
     return false;
 }
 
-static bool parse_chain(Parser *parser, Chain *chain)
+static bool parse_subscribe(Parser *parser, ChainAst *chain)
 {
-    if (strcmp(parser->lexer.current.text, "range") != 0)
-    {
-        return false;
-    }
-    lexer_next(&parser->lexer);
-    if (!expect(parser, TOK_LPAREN, "'('"))
-    {
-        return false;
-    }
-    if (parser->lexer.current.kind != TOK_NUMBER && parser->lexer.current.kind != TOK_IDENT)
-    {
-        return false;
-    }
-    strncpy(chain->range_min, parser->lexer.current.text, sizeof(chain->range_min) - 1);
-    lexer_next(&parser->lexer);
-    if (!expect(parser, TOK_COMMA, "','"))
-    {
-        return false;
-    }
-    if (parser->lexer.current.kind != TOK_NUMBER && parser->lexer.current.kind != TOK_IDENT)
-    {
-        return false;
-    }
-    strncpy(chain->range_max, parser->lexer.current.text, sizeof(chain->range_max) - 1);
-    lexer_next(&parser->lexer);
-    if (!expect(parser, TOK_RPAREN, "')'") || !expect(parser, TOK_DOT, "'.'"))
-    {
-        return false;
-    }
-    if (strcmp(parser->lexer.current.text, "pipe") != 0)
-    {
-        return false;
-    }
-    lexer_next(&parser->lexer);
     if (!expect(parser, TOK_LPAREN, "'('"))
     {
         return false;
     }
 
-    chain->op_count = 0;
-    if (!accept(parser, TOK_RPAREN))
+    if (parser->lexer.current.kind == TOK_IDENT && strcmp(parser->lexer.current.text, "assign") == 0)
     {
-        while (true)
+        lexer_next(&parser->lexer);
+        if (!expect(parser, TOK_LPAREN, "'('") || !expect_ident(parser, chain->subscriber_target, sizeof(chain->subscriber_target)))
         {
-            if (chain->op_count >= 16 || !parse_operator(parser, &chain->ops[chain->op_count]))
-            {
-                return false;
-            }
-            chain->op_count++;
-            if (accept(parser, TOK_COMMA))
-            {
-                continue;
-            }
-            if (!expect(parser, TOK_RPAREN, "')'"))
-            {
-                return false;
-            }
-            break;
+            return false;
         }
+        return expect(parser, TOK_RPAREN, "')'") && expect(parser, TOK_RPAREN, "')'") && expect(parser, TOK_SEMI, "';'");
     }
 
-    if (!expect(parser, TOK_DOT, "'.'"))
     {
-        return false;
-    }
-    if (strcmp(parser->lexer.current.text, "subscribe") != 0)
-    {
-        return false;
-    }
-    lexer_next(&parser->lexer);
-    if (!expect(parser, TOK_LPAREN, "'('"))
-    {
-        return false;
-    }
-
-    char lambda_param[32];
-    char assigned_from[32];
-    if (!expect_ident(parser, lambda_param, sizeof(lambda_param)) ||
-        !expect(parser, TOK_ARROW, "'=>'") ||
-        !expect_ident(parser, chain->subscriber_target, sizeof(chain->subscriber_target)))
-    {
-        return false;
-    }
-    if (!expect(parser, TOK_EQUAL, "'='"))
-    {
-        return false;
-    }
-    if (!expect_ident(parser, assigned_from, sizeof(assigned_from)))
-    {
-        return false;
-    }
-    if (strcmp(lambda_param, assigned_from) != 0)
-    {
-        fprintf(stderr, "parse error: subscribe must assign from lambda parameter\n");
-        return false;
+        char lambda_param[32];
+        char assigned_from[32];
+        if (!expect_ident(parser, lambda_param, sizeof(lambda_param)) ||
+            !expect(parser, TOK_ARROW, "'=>'") ||
+            !expect_ident(parser, chain->subscriber_target, sizeof(chain->subscriber_target)) ||
+            !expect(parser, TOK_EQUAL, "'='") ||
+            !expect_ident(parser, assigned_from, sizeof(assigned_from)))
+        {
+            return false;
+        }
+        if (strcmp(lambda_param, assigned_from) != 0)
+        {
+            fprintf(stderr, "parse error: subscribe must assign from lambda parameter\n");
+            return false;
+        }
     }
     return expect(parser, TOK_RPAREN, "')'") && expect(parser, TOK_SEMI, "';'");
 }
 
-bool parse_program_text(const char *source, Program *program)
+static bool parse_chain(Parser *parser, ChainAst *chain)
+{
+    memset(chain, 0, sizeof(*chain));
+    chain->source = parse_source(parser);
+    if (chain->source == NULL)
+    {
+        return false;
+    }
+    if (!expect(parser, TOK_DOT, "'.'"))
+    {
+        return false;
+    }
+    if (strcmp(parser->lexer.current.text, "pipe") == 0)
+    {
+        lexer_next(&parser->lexer);
+        if (!expect(parser, TOK_LPAREN, "'('"))
+        {
+            return false;
+        }
+        if (!accept(parser, TOK_RPAREN))
+        {
+            while (true)
+            {
+                if (chain->op_count >= 32 || !parse_operator(parser, &chain->ops[chain->op_count]))
+                {
+                    return false;
+                }
+                chain->op_count++;
+                if (accept(parser, TOK_COMMA))
+                {
+                    continue;
+                }
+                if (!expect(parser, TOK_RPAREN, "')'"))
+                {
+                    return false;
+                }
+                break;
+            }
+        }
+        if (!expect(parser, TOK_DOT, "'.'"))
+        {
+            return false;
+        }
+    }
+    if (strcmp(parser->lexer.current.text, "subscribe") != 0)
+    {
+        fprintf(stderr, "parse error: expected subscribe, got '%s'\n", parser->lexer.current.text);
+        return false;
+    }
+    lexer_next(&parser->lexer);
+    return parse_subscribe(parser, chain);
+}
+
+bool parse_program_text(const char *source, ProgramAst *program)
 {
     Parser parser;
     memset(&parser, 0, sizeof(parser));
@@ -328,7 +429,7 @@ bool parse_program_text(const char *source, Program *program)
 
     while (parser.lexer.current.kind != TOK_EOF)
     {
-        if (strcmp(parser.lexer.current.text, "fn") == 0)
+        if (parser.lexer.current.kind == TOK_IDENT && strcmp(parser.lexer.current.text, "fn") == 0)
         {
             if (program->function_count >= 64 || !parse_fn_def(&parser, &program->functions[program->function_count]))
             {
@@ -336,18 +437,13 @@ bool parse_program_text(const char *source, Program *program)
             }
             program->function_count++;
         }
-        else if (strcmp(parser.lexer.current.text, "range") == 0)
+        else
         {
             if (program->chain_count >= 32 || !parse_chain(&parser, &program->chains[program->chain_count]))
             {
                 return false;
             }
             program->chain_count++;
-        }
-        else
-        {
-            fprintf(stderr, "parse error: unexpected token '%s'\n", parser.lexer.current.text);
-            return false;
         }
     }
 

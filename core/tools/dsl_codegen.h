@@ -3,11 +3,10 @@
 
 #include <stdbool.h>
 
-#include "dsl_ast.h"
+#include "planner.h"
 
 typedef struct
 {
-    char support_file[260];
     char output_file[260];
     char binary_file[260];
     char runs_expr[64];
@@ -18,7 +17,7 @@ typedef struct
     bool run_generated;
 } CodegenOptions;
 
-bool emit_program_c(const Program *program, const CodegenOptions *options);
+bool emit_program_c(const ExecutionPlan *plan, const CodegenOptions *options);
 int compile_generated_program(const CodegenOptions *options);
 int run_generated_program(const CodegenOptions *options);
 

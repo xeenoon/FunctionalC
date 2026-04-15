@@ -1,0 +1,731 @@
+Compiler Plan For Full Observable Coverage
+
+Goal
+
+Build a DSL compiler that can express every operator currently defined in `core/src/observable.c`, generate the fastest implementation available for a given chain, and only fall back to the generic runtime when fusion would either break semantics or cost too much complexity for too little gain.
+
+Performance is the top priority. The compiler should prefer:
+
+1. one generated loop over source data
+2. no intermediate `List` materialization
+3. no variadic `pipe(...)` chain where a direct generated `call_XX(...)` can replace it
+4. direct function calls instead of per-element query dispatch when semantics allow it
+5. runtime fallback only for operators that are genuinely multi-source, asynchronous, or not worth inlining yet
+
+
+High-Level Architecture
+
+The compiler will be split into five layers.
+
+1. Frontend
+   - Tokenize the DSL.
+   - Parse function declarations, source declarations, operator chains, and subscription targets.
+   - Build a syntax AST.
+
+2. Semantic Lowering
+   - Convert parsed DSL into a normalized pipeline IR.
+   - Resolve every operator name against a registry.
+   - Resolve every user function against a function table.
+   - Classify each user function by signature:
+     - unary transform
+     - unary predicate
+     - binary accumulator
+     - comparer/projector
+
+3. Planning
+   - Walk the operator chain and partition it into execution regions.
+   - Each region is assigned one backend:
+     - fused loop backend
+     - stateful fused loop backend
+     - runtime wrapper backend
+     - source-composition backend
+
+4. Code Generation
+   - Emit helper C functions compiled from DSL `fn` definitions.
+   - Emit generated `call_00`, `call_01`, etc.
+   - Emit either:
+     - a single custom query attached directly to the source observable, or
+     - a generated wrapper that calls your existing runtime constructors
+
+5. Runtime Integration
+   - Keep the same `Observable` and `Query` structures from `core/src/observable.h`.
+   - Keep `subscribe`, `range`, `of`, `zip`, `interval`, `timer`, etc. from `core/src`.
+   - Replace the runtime cost of `pipe(...)` with one generated `call_XX(...)` whenever possible.
+
+
+Core Principle
+
+Do not try to hardcode pairwise combinations like `map + filter`, `map + reduce`, `filter + take`, etc.
+
+Instead:
+
+- define what each operator does
+- define what state it needs
+- define whether it can stream
+- define whether it is terminal
+- define whether it needs another observable
+- let the planner compose those properties
+
+That is the only scalable way to support the full operator surface.
+
+
+DSL Direction
+
+The DSL will stay functional and explicit. It should not allow inline arithmetic or JS operators in chains.
+
+Allowed shape:
+
+`fn square(x) { return mul(x, x); }`
+`fn isEven(x) { return eq(mod(x, 2), 0); }`
+`fn add(accum, next) { return plus(accum, next); }`
+
+`range(1, N).pipe(map(square), filter(isEven), reduce(add)).subscribe(assign(result_sum));`
+
+Later examples:
+
+`range(1, N).pipe(skip(10), take(100), last()).subscribe(assign(result_sum));`
+`of(1, 2, 3, 4).pipe(scan(add), distinct(identity)).subscribe(assign(out));`
+
+The DSL should name functions and operators only. That keeps parsing simple and makes optimization reliable.
+
+
+Function System
+
+User-defined functions will compile to plain C helpers over `void *`.
+
+Example:
+
+DSL:
+`fn add(accum, next) { return plus(accum, next); }`
+
+Generated C:
+`static void *add(void *accum, void *next) { return (void *)(intptr_t)((intptr_t)accum + (intptr_t)next); }`
+
+Function kinds to support:
+
+- unary value transform: `void *fn(void *x)`
+- unary predicate: `bool fn(void *x)`
+- binary accumulator: `void *fn(void *accum, void *next)`
+- unary projector/key extractor: `void *fn(void *x)`
+- binary comparer later if needed: `bool fn(void *a, void *b)`
+
+Builtins the expression emitter should support first:
+
+- `plus`
+- `minus`
+- `mul`
+- `div`
+- `mod`
+- `eq`
+- `neq`
+- `lt`
+- `lte`
+- `gt`
+- `gte`
+- `and`
+- `or`
+- `not`
+- `identity`
+
+Later:
+
+- `ifElse`
+- tuple/list constructors if needed for `zip`/`mergeMap`
+
+
+Operator Registry
+
+Add a central operator registry in the compiler. Every operator from `observable.h` gets an entry.
+
+Each entry should include:
+
+- DSL name
+- runtime constructor name
+- category
+- source or pipe operator
+- input arity
+- whether it is stateless
+- whether it needs persistent state
+- whether it changes cardinality
+- whether it is terminal
+- whether it can early-exit
+- whether it requires materialization
+- whether it requires another observable
+- whether it is fusible
+- whether it is asynchronous/time-based
+
+Suggested categories:
+
+- Source
+- Stateless transform
+- Stateless filter
+- Stateful transform
+- Stateful filter/gate
+- Terminal aggregation
+- Materializer/batcher
+- Multi-source combiner
+- Async/time operator
+
+
+Execution Regions
+
+The planner will split a chain into maximal regions that can share one execution strategy.
+
+Region types:
+
+1. Fused Stateless Stream Region
+   - One input item processed at a time.
+   - No intermediate list.
+   - Examples: `map`, `filter`, `mapTo`
+
+2. Fused Stateful Stream Region
+   - One loop, but with generated local or persistent state.
+   - Examples: `take`, `skip`, `takeWhile`, `skipWhile`, `scan`, `reduce`, `last`, `distinctUntilChanged`
+
+3. Stateful Materializing Region
+   - Needs a cache structure.
+   - Examples: `distinct`, possibly `buffer`
+
+4. Runtime Wrapper Region
+   - Emit generated C that calls existing `core/src` operators.
+   - Used for difficult or asynchronous operators initially.
+
+5. Source Composition Region
+   - Builds the input observable itself from multiple sources.
+   - Examples: `zip`, `interval`, `timer`, `defer`
+
+This allows mixed strategies in the same generated program.
+
+
+How Every Existing Function Will Be Implemented
+
+Below is the intended implementation path for every operator currently declared in `core/src/observable.h`.
+
+
+Sources
+
+`create_observable`
+- Not exposed in DSL directly.
+- Used by generated code when attaching custom queries or constructing wrapper observables.
+
+`range(int min, int max)`
+- Compiler support: direct.
+- Best backend: source-specialized fused generation.
+- Plan:
+  - when source is `range`, do not necessarily allocate source items at all in the fused path
+  - generate:
+    `for (intptr_t x = min; x <= max; ++x) { ... }`
+  - fallback to runtime `range(...)` only when a later region requires an actual `Observable`/`List`
+- Performance priority: highest. This avoids both list allocation and source traversal overhead.
+
+`of(int count, ...)`
+- Compiler support: direct.
+- Best backend:
+  - for constant DSL literals, generate a local static array or local `intptr_t values[]`
+  - loop over the array directly
+  - fallback to runtime `of(...)` when passing through a runtime wrapper region
+- Risk:
+  - supporting heterogeneous pointer literals later will require a richer literal representation
+
+`from(List *data)`
+- Compiler support: medium priority.
+- Best backend:
+  - generated code can wrap an existing list when the DSL references a named external list symbol
+  - otherwise treat as runtime-only initially
+- Risk:
+  - ownership semantics of the incoming list must be explicit
+
+`never()`
+- Compiler support: runtime wrapper initially.
+- Semantics:
+  - no emissions, no completion
+- Codegen:
+  - for batch benchmark-style execution it just produces no output
+  - for a runtime integration path it should call existing `never()`
+
+`empty()`
+- Compiler support: direct.
+- Best backend:
+  - zero-iteration source
+  - emit no items and mark complete immediately
+
+`interval(long ms)`
+- Compiler support: runtime wrapper first.
+- Reason:
+  - time scheduling is already implemented in `core/src/task.c`
+  - fusing this into the DSL compiler does not materially improve the hot batch benchmark path
+- Later optimization:
+  - specialize trivial `interval(...).pipe(take(n))`
+
+`timer(long ms, int period)`
+- Compiler support: runtime wrapper first.
+- Same reason as `interval`.
+
+`defer(FactoryFn factory)`
+- Compiler support: runtime wrapper first.
+- Reason:
+  - source is created on subscription, not at compile time
+  - generated wrapper can call the runtime factory path cleanly
+
+`zip(int count, ...)`
+- Compiler support: yes.
+- Initial backend:
+  - source-composition region
+  - for static batch sources, emit a direct zip loop over the shortest source
+  - for general case, use runtime `zip(...)`
+- Later optimization:
+  - if all zipped sources are compile-known batch sources, generate direct nested access without building intermediate observables
+- Risk:
+  - zipped tuples need a representation; likely keep using `List *` tuples first to match current runtime
+
+
+Pipe Operators: Easy Fused Core
+
+`map(ModifierFunction m)`
+- Compiler support: direct fused.
+- Generated form:
+  - `value = map_fn(value);`
+- No materialization.
+
+`filter(BooleanFunction pred)`
+- Compiler support: direct fused.
+- Generated form:
+  - `if (!pred(value)) continue;`
+- No materialization.
+
+`mapTo(void *newitem)`
+- Compiler support: direct fused.
+- Generated form:
+  - `value = constant_or_symbol;`
+- No materialization.
+
+`take(int number)`
+- Compiler support: direct fused.
+- Generated state:
+  - counter
+- Generated form:
+  - emit until counter reaches N, then break the loop
+- Important:
+  - if `take` appears before terminal reduction, it should stop the source loop early
+- High performance win.
+
+`skip(int number)`
+- Compiler support: direct fused.
+- Generated state:
+  - counter
+- Generated form:
+  - discard first N items, then continue normally
+
+`takeWhile(BooleanFunction func)`
+- Compiler support: direct fused.
+- Generated form:
+  - if predicate fails, break loop
+- Important:
+  - this is an early-exit operator and should terminate the source loop immediately
+
+`skipWhile(BooleanFunction func)`
+- Compiler support: direct fused.
+- Generated state:
+  - boolean `passed`
+- Generated form:
+  - skip while predicate true and `passed == false`
+  - emit rest once first failure occurs
+
+`last()`
+- Compiler support: direct fused.
+- Generated state:
+  - `last_seen`
+  - `has_last`
+- Generated form:
+  - update `last_seen` for every surviving item
+  - emit once at end
+- No intermediate list required.
+
+
+Pipe Operators: Stateful But Still Good Candidates For Fusion
+
+`scan(AccumulatorFunction accum)`
+- Compiler support: direct fused.
+- Generated state:
+  - accumulator
+- Generated form:
+  - `accum = fn(accum, value); value = accum; emit value;`
+- No materialization.
+- Note:
+  - preserve runtime semantics around initial `NULL` accumulator
+
+`scanfrom(AccumulatorFunction accum, void *from)`
+- Compiler support: direct fused.
+- Same as `scan`, but seed with `from`
+
+`reduce(AccumulatorFunction accum)`
+- Compiler support: direct fused terminal.
+- Generated state:
+  - accumulator
+- Generated form:
+  - consume all surviving values, emit once at end
+- Important:
+  - if a `reduce` appears, downstream operators are only valid if they accept a single post-terminal value
+  - planner should normally enforce `reduce` as terminal in DSL
+
+`distinctUntilChanged(ModifierFunction comp)`
+- Compiler support: direct fused.
+- Generated state:
+  - `last_key`
+  - `has_last`
+- Generated form:
+  - `key = comp(value);`
+  - skip if `has_last && key == last_key`
+  - else update and emit
+- No large cache required.
+- High priority after core subset.
+
+`takeUntil(void *comp)`
+- Compiler support: direct fused for pointer-equality form matching current runtime.
+- Generated form:
+  - emit current value
+  - if `value == comp`, terminate stream after this item
+- If a custom comparer is later added, this becomes a more general gate operator.
+
+`skipUntil(void *comp)`
+- Compiler support: direct fused for pointer-equality form.
+- Generated state:
+  - `ended`
+- Generated form:
+  - begin emitting once `value == comp`
+
+
+Pipe Operators: Stateful And Probably Materializing
+
+`distinct(ModifierFunction comp)`
+- Compiler support: yes, but not as the first fusion target.
+- Generated state:
+  - seen-set of projected keys
+- Current runtime uses a linear list cache, which is slow.
+- Performance plan:
+  - compiler backend should not inherit that exact cost structure if we are optimizing
+  - introduce a compiler-private seen-set abstraction for generated code
+  - start with a simple flat hash set over `intptr_t`
+- Fallback:
+  - until the set exists, route this operator through runtime wrapper mode
+- Risk:
+  - `void *` genericity means true hashing for arbitrary pointer payloads is only pointer-identity unless richer type info exists
+
+`buffer(Observable *self, Observable *flusher)`
+- Compiler support: yes, runtime wrapper first.
+- Reason:
+  - this is a batching operator coordinated by another observable
+  - it is not a natural one-loop batch transform in the current model
+- Later optimized backend:
+  - if flusher is compile-known periodic or count-based, synthesize a specialized batching region
+- Immediate approach:
+  - generate wrapper code that builds the runtime buffer chain directly
+
+`mergeMap(Observable *o)`
+- Compiler support: yes, runtime wrapper first.
+- Reason:
+  - current semantics in your runtime behave more like a cross product with pre-existing inner observable data
+  - this is cardinality-expanding and potentially nested
+- Later optimized backend:
+  - if inner source is static and finite, generate nested loops directly
+- Risk:
+  - true RxJS `mergeMap` semantics are broader than current runtime semantics; compiler should target your runtime semantics first
+
+`throttleTime(Observable *self, int time)`
+- Compiler support: yes, runtime wrapper first.
+- Reason:
+  - this relies on scheduling, readiness flags, and callback timing
+  - it is not part of the high-throughput batch benchmark path
+- Later optimization:
+  - special-case purely synchronous “preloaded finite data + throttle” if needed, but low ROI compared with core operators
+
+
+Pipe Operators: Simple Runtime Wrappers At First
+
+`pipe(Observable *self, int count, ...)`
+- Not used as the main execution path in optimized output.
+- Generated code should prefer:
+  - `Observable *call_00(Observable *self)`
+- But for fallback segments:
+  - the compiler may still emit calls to runtime constructors and attach them manually or call `pipe(...)` when the region is explicitly runtime-backed
+
+`first()`
+- Not exported in header, but present in `observable.c`.
+- Treat as shorthand for `take(1)` or `takeUntil(always_true)` depending on desired semantics.
+- Compiler plan:
+  - expose in DSL later as a builtin operator and lower to `take(1)` in IR
+
+
+Planner Rules
+
+The planner should follow strict performance-first heuristics.
+
+1. Source specialization first
+   - `range` and `of` should preferentially become generated loops, not runtime observables
+
+2. Fuse maximal single-source regions
+   - `map/filter/take/skip/takeWhile/skipWhile/mapTo/scan/reduce/last/distinctUntilChanged/takeUntil/skipUntil`
+
+3. Treat materializers and async operators as region boundaries
+   - `distinct`, `buffer`, `mergeMap`, `throttleTime`, `zip`, `interval`, `timer`, `defer`
+
+4. Prefer direct generated state over generic query objects
+   - a local `struct state_call_00 { ... }` is cheaper than allocating several `Query` contexts
+
+5. Only allocate `List` results at region boundaries
+   - not between every operator
+
+6. When a chain is entirely fusible, generate exactly one `call_XX_apply(...)`
+
+
+Generated Code Shapes
+
+Case A: Fully Fused Single-Source Batch Pipeline
+
+Example:
+`range(1, N).pipe(map(square), filter(isEven), reduce(add)).subscribe(assign(result));`
+
+Generated structure:
+
+- helper function definitions from DSL
+- `static List *call_00_apply(List *data, void *ctx)` or a source-specialized loop helper
+- `Observable *call_00(Observable *self)` which attaches a single generated query
+
+Performance upgrade over current version:
+
+- if source is `range`, bypass `List *data` entirely and generate a direct min/max loop
+- only produce a 1-element list if runtime subscribe path requires one
+
+Case B: Mixed Fused + Runtime
+
+Example:
+`range(1, N).pipe(map(square), distinct(identity), reduce(add)).subscribe(assign(result));`
+
+Plan:
+
+- region 1 fused: `map(square)`
+- region 2 runtime or generated stateful materializer: `distinct(identity)`
+- region 3 fused terminal: `reduce(add)`
+
+Generated structure:
+
+- `call_00` uses one generated wrapper function
+- inside it, either:
+  - invokes a compiler-generated distinct region, or
+  - constructs a runtime query for that segment only
+
+Case C: Pure Runtime Wrapper
+
+Example:
+`interval(100).pipe(buffer(flusher), throttleTime(200)).subscribe(assign(out));`
+
+Plan:
+
+- emit code that constructs the observable graph using your runtime directly
+- compiler still parses it, validates it, and wires it automatically
+- no manual hand-written C needed from the user
+
+
+Compiler File Structure
+
+Keep the tool split and grow it, not as one big file.
+
+Recommended files under `core/tools`:
+
+- `dsl_lexer.c/.h`
+  - tokenization only
+
+- `dsl_parser.c/.h`
+  - syntax parsing only
+
+- `dsl_ast.h`
+  - syntax AST structs
+
+- `ir.h`
+  - normalized semantic IR
+
+- `lowering.c/.h`
+  - AST -> IR lowering
+
+- `operator_registry.c/.h`
+  - operator metadata table
+
+- `function_registry.c/.h`
+  - user function classification and validation
+
+- `planner.c/.h`
+  - IR -> execution region plan
+
+- `codegen_expr.c/.h`
+  - builtin expression emitter
+
+- `codegen_fused.c/.h`
+  - fused region emission
+
+- `codegen_runtime.c/.h`
+  - runtime wrapper emission
+
+- `dsl_codegen.c/.h`
+  - top-level generated C emission coordination
+
+- `pipeline_codegen.c`
+  - CLI entrypoint
+
+
+Data Structures Needed In The Compiler
+
+1. Function IR
+   - name
+   - arity
+   - return kind
+   - expression tree
+
+2. Operator Node
+   - kind
+   - resolved registry entry
+   - function symbol if any
+   - literal arguments if any
+   - observable arguments if any
+
+3. Source Node
+   - source kind
+   - literal args
+   - source references
+
+4. Region Plan
+   - region type
+   - source/inputs
+   - operator slice `[start, end)`
+   - state requirements
+   - backend choice
+
+
+Performance Priorities By Phase
+
+Phase 1
+- finish core planner architecture
+- support:
+  - `range`
+  - `of`
+  - `map`
+  - `filter`
+  - `mapTo`
+  - `take`
+  - `skip`
+  - `takeWhile`
+  - `skipWhile`
+  - `scan`
+  - `scanfrom`
+  - `reduce`
+  - `last`
+  - `distinctUntilChanged`
+  - `takeUntil`
+  - `skipUntil`
+- source-specialize `range` and `of`
+- generate one loop where possible
+
+Phase 2
+- add runtime-backed support for:
+  - `distinct`
+  - `buffer`
+  - `mergeMap`
+  - `throttleTime`
+  - `zip`
+  - `interval`
+  - `timer`
+  - `defer`
+  - `empty`
+  - `never`
+  - `from`
+- compiler can parse and generate all of them even if not all are fused
+
+Phase 3
+- replace runtime fallbacks selectively where the profile says it matters
+- likely first candidates:
+  - direct zip loops for static finite sources
+  - generated hash-set path for `distinct`
+  - nested-loop specialization for simple `mergeMap`
+
+
+Known Problems And Risks
+
+1. Current runtime semantics are not fully RxJS-like
+   - especially `mergeMap`, `buffer`, and time-based operators
+   - compiler should match your runtime semantics first, not idealized RxJS semantics
+
+2. `void *` genericity is fast enough for integer-like benchmarks but weak for real typing
+   - equality and hashing are pointer-based unless the DSL introduces richer type metadata
+
+3. Asynchronous operators are not natural fits for one fused batch loop
+   - trying to fully fuse them early is likely wasted effort
+
+4. Some current runtime operators are implemented with sentinel completion tokens
+   - compiler-generated fused loops should avoid sentinel dependence where possible
+   - but wrappers must still interoperate with the runtime convention
+
+5. `from(List *data)` and external symbols need ownership rules
+   - otherwise generated code may leak or free the wrong thing
+
+6. `distinct` needs a proper generated set structure to be performant
+   - copying the current O(n^2) cache scan into generated code would technically work but would not meet the performance goal
+
+7. Multi-source operators require graph planning, not just linear chain planning
+   - `zip`, `buffer`, `mergeMap` all introduce graph edges
+
+
+Concrete Implementation Order
+
+1. Add operator registry and semantic IR.
+2. Refactor existing codegen to target IR, not raw parser output.
+3. Add region planner.
+4. Expand DSL parser to accept every current operator signature.
+5. Implement fused backend for all single-source fusible operators.
+6. Implement runtime wrapper backend for the rest.
+7. Add validation rules:
+   - reject illegal operator placement
+   - reject wrong function signatures
+   - reject unsupported source/operator mixes clearly
+8. Add tests for each operator individually.
+9. Add mixed-chain tests to confirm planner partitioning.
+10. Profile again before replacing any runtime fallback with a hand-optimized backend.
+
+
+Testing Strategy
+
+Use `testdata/` as the checked-in DSL corpus.
+
+Need:
+
+1. One DSL example per operator.
+2. Mixed operator examples.
+3. Result-correctness tests.
+4. Performance benchmarks for fusible chains.
+5. Regression tests for runtime-backed chains.
+
+Examples to add:
+
+- `range + map`
+- `range + skip + take`
+- `range + takeWhile + last`
+- `range + scan`
+- `range + distinctUntilChanged`
+- `of + zip`
+- `range + distinct`
+- `interval + take`
+- `timer + buffer`
+- `range + mergeMap`
+
+
+Definition Of Success
+
+Success is not “every operator is fused”.
+
+Success is:
+
+- every operator currently in `core/src/observable.h` is accepted by the DSL compiler
+- every valid pipeline generates C automatically
+- hot linear batch pipelines compile to one tight generated loop
+- complex operators still work through generated runtime wrappers
+- the compiler chooses the fast path automatically
+
+That gives full feature coverage without sacrificing performance on the workloads where performance actually matters most.

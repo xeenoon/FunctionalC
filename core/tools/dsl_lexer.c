@@ -5,9 +5,25 @@
 
 static void skip_ws(Lexer *lexer)
 {
-    while (lexer->pos < lexer->length && isspace((unsigned char)lexer->source[lexer->pos]))
+    while (lexer->pos < lexer->length)
     {
-        lexer->pos++;
+        if (isspace((unsigned char)lexer->source[lexer->pos]))
+        {
+            lexer->pos++;
+            continue;
+        }
+        if (lexer->source[lexer->pos] == '/' &&
+            lexer->pos + 1 < lexer->length &&
+            lexer->source[lexer->pos + 1] == '/')
+        {
+            lexer->pos += 2;
+            while (lexer->pos < lexer->length && lexer->source[lexer->pos] != '\n')
+            {
+                lexer->pos++;
+            }
+            continue;
+        }
+        break;
     }
 }
 
