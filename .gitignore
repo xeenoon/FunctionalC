@@ -1,5 +1,6 @@
-# Virtual python environment
+# Python stuff
 .venv/
+__pycache__/
 
 # NPM packages
 node_modules/
