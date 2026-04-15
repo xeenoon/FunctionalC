@@ -89,6 +89,15 @@ bool isStreamComplete(void *item)
     }
     return false;
 }
+
+static void free_replaced_list(List *previous, List *next)
+{
+    if (previous != next)
+    {
+        freelist(previous);
+    }
+}
+
 void pop_all(Observable *o)
 {
     if (o->complete)
@@ -103,12 +112,16 @@ void pop_all(Observable *o)
 
     if (o->emit_handler)
     {
-        List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
+        List *current = data;
+        List *temp = o->emit_handler->func(current, o->emit_handler->ctx);
+        free_replaced_list(current, temp);
 
         Observable *lastpipe = o->pipe;
         while (lastpipe != NULL && lastpipe->emit_handler)
         {
-            temp = lastpipe->emit_handler->func(temp, lastpipe->emit_handler->ctx);
+            current = temp;
+            temp = lastpipe->emit_handler->func(current, lastpipe->emit_handler->ctx);
+            free_replaced_list(current, temp);
             lastpipe = lastpipe->pipe;
         }
         o->data = temp;
