@@ -1,7 +1,10 @@
-# Ignore everything
-*
+# Virtual python environment
+.venv/
 
-# Except these
-!.gitignore
-!Makefile
-!/src/
+# NPM packages
+node_modules/
+
+# Outputted files
+*_O1
+*_O2
+*_O3
