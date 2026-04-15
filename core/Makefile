@@ -1,10 +1,10 @@
 # Compiler and flags
 CC     = gcc
-CFLAGS = -Wall -Wextra -g -O0 -I./src
+CFLAGS = -Wall -Wextra -g -O0 -I./core/src
 LDFLAGS = 
 
 # Directories
-SRC_DIR = src
+SRC_DIR = core/src
 OBJ_DIR = obj
 
 # Files

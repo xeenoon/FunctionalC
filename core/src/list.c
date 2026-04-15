@@ -1,55 +1,117 @@
 #include "list.h"
+#include "profiler.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 
+static int normalized_capacity(int capacity)
+{
+    int result = 2;
+    while (result < capacity)
+    {
+        result *= 2;
+    }
+    return result;
+}
+
+List *init_list_with_capacity(int capacity)
+{
+    uint64_t start = PROFILE_NOW_NS();
+    List *result = malloc(sizeof(List));
+    result->allocatedsize = normalized_capacity(capacity);
+    result->data = malloc(result->allocatedsize * sizeof(void *));
+    result->front = 0;
+    result->rear = 0;
+    result->size = 0;
+    PROFILE_INC(init_list_calls);
+    PROFILE_ADD(init_list_ns, PROFILE_NOW_NS() - start);
+    return result;
+}
+
 List *init_list()
 {
-    List *result = malloc(sizeof(List));
-    result->allocatedsize = 2;
-    result->data = malloc(result->allocatedsize * sizeof(void *));
-    result->rear = 0;
-    result->front = 0;
-    result->size = 0;
-    return result;
+    return init_list_with_capacity(2);
+}
+
+void list_reserve(List *list, int capacity)
+{
+    if (capacity <= list->allocatedsize)
+    {
+        return;
+    }
+
+    uint64_t start = PROFILE_NOW_NS();
+    int newsize = normalized_capacity(capacity);
+    void **resultdata = calloc(newsize, sizeof(void *));
+    memcpy(resultdata, list->data, list->size * sizeof(void *));
+
+    free(list->data);
+    list->data = resultdata;
+    list->allocatedsize = newsize;
+    list->front = 0;
+    list->rear = list->size;
+    PROFILE_INC(resize_calls);
+    PROFILE_ADD(resize_ns, PROFILE_NOW_NS() - start);
+    PROFILE_ADD(resize_items_copied, list->size);
 }
 
 void push_back(List *list, void *item)
 {
+    uint64_t start = PROFILE_NOW_NS();
     if (list->size == list->allocatedsize)
     {
         resize(list);
     }
-    list->data[list->rear] = item;
-    list->rear = (list->rear + 1) % list->allocatedsize;
+    list->data[list->size] = item;
     ++list->size;
+    list->rear = list->size;
+    PROFILE_INC(push_back_calls);
+    PROFILE_ADD(push_back_ns, PROFILE_NOW_NS() - start);
 }
 
 void push_front(List *list, void *item)
 {
+    uint64_t start = PROFILE_NOW_NS();
     if (list->size == list->allocatedsize)
     {
         resize(list);
     }
-    list->front = (list->front - 1 + list->allocatedsize) % list->allocatedsize;
-    list->data[list->front] = item;
+    memmove(&list->data[1], &list->data[0], list->size * sizeof(void *));
+    list->data[0] = item;
     ++list->size;
+    list->rear = list->size;
+    PROFILE_INC(push_front_calls);
+    PROFILE_ADD(push_front_ns, PROFILE_NOW_NS() - start);
 }
 
 void *list_get(List *list, int idx)
 {
+    uint64_t start = PROFILE_NOW_NS();
     if (list->size == 0)
+    {
+        PROFILE_INC(list_get_calls);
+        PROFILE_ADD(list_get_ns, PROFILE_NOW_NS() - start);
         return NULL;
-    return list->data[(list->front + idx) % list->allocatedsize];
+    }
+    PROFILE_INC(list_get_calls);
+    PROFILE_ADD(list_get_ns, PROFILE_NOW_NS() - start);
+    return list->data[idx];
 }
 
 void *pop(List *list)
 {
+    uint64_t start = PROFILE_NOW_NS();
     if (list->size == 0)
+    {
+        PROFILE_INC(pop_calls);
+        PROFILE_ADD(pop_ns, PROFILE_NOW_NS() - start);
         return NULL;
-    list->rear = (list->rear - 1 + list->allocatedsize) % list->allocatedsize;
-    void *result = list->data[list->rear];
+    }
+    void *result = list->data[list->size - 1];
     --list->size;
+    list->rear = list->size;
+    PROFILE_INC(pop_calls);
+    PROFILE_ADD(pop_ns, PROFILE_NOW_NS() - start);
     return result;
 }
 
@@ -57,54 +119,51 @@ void *peek(List *list)
 {
     if (list->size == 0)
         return NULL;
-    int rear = (list->rear - 1 + list->allocatedsize) % list->allocatedsize;
-    void *result = list->data[rear];
+    void *result = list->data[list->size - 1];
     return result;
 }
 
 void *popstart(List *list)
 {
+    uint64_t start = PROFILE_NOW_NS();
     if (list->size == 0)
+    {
+        PROFILE_INC(popstart_calls);
+        PROFILE_ADD(popstart_ns, PROFILE_NOW_NS() - start);
         return NULL;
-    void *result = list->data[list->front];
-    list->front = (list->front + 1) % list->allocatedsize;
+    }
+    void *result = list->data[0];
+    if (list->size > 1)
+    {
+        memmove(&list->data[0], &list->data[1], (list->size - 1) * sizeof(void *));
+    }
     --list->size;
+    list->rear = list->size;
+    PROFILE_INC(popstart_calls);
+    PROFILE_ADD(popstart_ns, PROFILE_NOW_NS() - start);
     return result;
 }
 
 bool list_isempty(List *list)
 {
+    uint64_t start = PROFILE_NOW_NS();
+    PROFILE_INC(list_isempty_calls);
+    PROFILE_ADD(list_isempty_ns, PROFILE_NOW_NS() - start);
     return list->size == 0;
 }
 
 void resize(List *list)
 {
-    int oldsize = list->allocatedsize;
-    int newsize = oldsize * 2;
-
-    void **resultdata = calloc(newsize, sizeof(void *));
-    int index = list->front;
-
-    // Copy data from old array to new array
-    for (int i = 0; i < list->size; i++)
-    {
-        resultdata[i] = list->data[index];
-        index = (index + 1) % oldsize;
-    }
-
-    free(list->data);
-    list->data = resultdata;
-    list->allocatedsize = newsize;
-
-    // Reset the front and rear to proper values after resizing
-    list->front = 0;
-    list->rear = list->size; // Rear should be size, since it's the next free slot
+    list_reserve(list, list->allocatedsize * 2);
 }
 
 void freelist(List *list)
 {
+    uint64_t start = PROFILE_NOW_NS();
     free(list->data);
     free(list);
+    PROFILE_INC(freelist_calls);
+    PROFILE_ADD(freelist_ns, PROFILE_NOW_NS() - start);
 }
 
 void list_remove(List *list, int idx)
@@ -112,39 +171,10 @@ void list_remove(List *list, int idx)
     if (idx < 0 || idx >= list->size)
         return; // invalid index, do nothing or handle error
 
-    // Calculate the real index in data array
-    int real_idx = (list->front + idx) % list->allocatedsize;
-
-    // Decide whether to shift elements left (towards front) or right (towards rear)
-    int dist_front = idx;                 // how many elements before idx
-    int dist_rear = list->size - 1 - idx; // how many elements after idx
-
-    if (dist_front < dist_rear)
+    if (idx < list->size - 1)
     {
-        // Shift elements before idx forward (towards rear)
-        // Move elements from front..real_idx-1 one step right
-        int cur = real_idx;
-        while (cur != list->front)
-        {
-            int prev = (cur - 1 + list->allocatedsize) % list->allocatedsize;
-            list->data[cur] = list->data[prev];
-            cur = prev;
-        }
-        list->front = (list->front + 1) % list->allocatedsize;
+        memmove(&list->data[idx], &list->data[idx + 1], (list->size - idx - 1) * sizeof(void *));
     }
-    else
-    {
-        // Shift elements after idx backward (towards front)
-        // Move elements from real_idx+1..rear one step left
-        int cur = real_idx;
-        while (cur != (list->rear - 1 + list->allocatedsize) % list->allocatedsize)
-        {
-            int next = (cur + 1) % list->allocatedsize;
-            list->data[cur] = list->data[next];
-            cur = next;
-        }
-        list->rear = (list->rear - 1 + list->allocatedsize) % list->allocatedsize;
-    }
-
     list->size--;
+    list->rear = list->size;
 }

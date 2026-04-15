@@ -5,7 +5,6 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include "task.h"
-#include "profiler.h"
 
 Observable *create_observable()
 {
@@ -91,159 +90,33 @@ bool isStreamComplete(void *item)
     return false;
 }
 
-static void free_replaced_list(List *previous, List *next)
-{
-    if (previous != next)
-    {
-        freelist(previous);
-    }
-}
-
-static bool query_chain_is_streamable(Observable *o)
-{
-    bool seen_reduce = false;
-    Observable *current = o;
-    while (current != NULL && current->emit_handler != NULL)
-    {
-        QueryKind kind = current->emit_handler->kind;
-        if (kind != QUERY_KIND_MAP && kind != QUERY_KIND_FILTER && kind != QUERY_KIND_REDUCE)
-        {
-            return false;
-        }
-        if (seen_reduce)
-        {
-            return false;
-        }
-        if (kind == QUERY_KIND_REDUCE)
-        {
-            seen_reduce = true;
-        }
-        current = current->pipe;
-    }
-    return true;
-}
-
-static void reset_observable_data(Observable *o)
-{
-    o->data = init_list();
-}
-
-static void stream_emit_value(Observable *o, void *value)
-{
-    if (o->subscriber)
-    {
-        o->subscriber(value);
-        PROFILE_INC(pop_all_emitted);
-    }
-}
-
-static void pop_all_streaming(Observable *o, List *data, uint64_t total_start)
-{
-    uint64_t transform_start = PROFILE_NOW_NS();
-    bool has_reduce = false;
-    void *reduced = NULL;
-    int size = data->size;
-
-    for (int i = 0; i < size; ++i)
-    {
-        void *item = data->data[i];
-        if (isStreamComplete(item))
-        {
-            o->complete = true;
-            break;
-        }
-
-        bool keep_item = true;
-        void *current_value = item;
-        Observable *stage = o;
-
-        while (stage != NULL && stage->emit_handler != NULL)
-        {
-            Query *query = stage->emit_handler;
-            if (query->kind == QUERY_KIND_MAP)
-            {
-                MapCtx *ctx = (MapCtx *)query->ctx;
-                current_value = ctx->pred(current_value);
-            }
-            else if (query->kind == QUERY_KIND_FILTER)
-            {
-                FilterCtx *ctx = (FilterCtx *)query->ctx;
-                if (!ctx->pred(current_value))
-                {
-                    keep_item = false;
-                    break;
-                }
-            }
-            else if (query->kind == QUERY_KIND_REDUCE)
-            {
-                ScanCtx *ctx = (ScanCtx *)query->ctx;
-                reduced = ctx->pred(reduced, current_value);
-                has_reduce = true;
-                keep_item = false;
-                break;
-            }
-            stage = stage->pipe;
-        }
-
-        if (keep_item)
-        {
-            stream_emit_value(o, current_value);
-        }
-    }
-
-    if (has_reduce)
-    {
-        stream_emit_value(o, reduced);
-    }
-
-    PROFILE_ADD(pop_all_transform_ns, PROFILE_NOW_NS() - transform_start);
-    freelist(data);
-    reset_observable_data(o);
-    PROFILE_INC(pop_all_calls);
-    PROFILE_ADD(pop_all_ns, PROFILE_NOW_NS() - total_start);
-}
 
 void pop_all(Observable *o)
 {
-    uint64_t total_start = PROFILE_NOW_NS();
     if (o->complete)
     {
-        PROFILE_INC(pop_all_calls);
-        PROFILE_ADD(pop_all_ns, PROFILE_NOW_NS() - total_start);
         return;
     }
     List *data = o->data;
     if (list_isempty(data) && !o->ready) // We could be buffering, so if we arent ready yet, run the queries to see if we are
     {
-        PROFILE_INC(pop_all_calls);
-        PROFILE_ADD(pop_all_ns, PROFILE_NOW_NS() - total_start);
-        return;
-    }
-
-    if (o->emit_handler && query_chain_is_streamable(o))
-    {
-        pop_all_streaming(o, data, total_start);
         return;
     }
 
     if (o->emit_handler)
     {
-        uint64_t transform_start = PROFILE_NOW_NS();
         List *current = data;
         List *temp = o->emit_handler->func(current, o->emit_handler->ctx);
-        free_replaced_list(current, temp);
 
         Observable *lastpipe = o->pipe;
         while (lastpipe != NULL && lastpipe->emit_handler)
         {
             current = temp;
             temp = lastpipe->emit_handler->func(current, lastpipe->emit_handler->ctx);
-            free_replaced_list(current, temp);
             lastpipe = lastpipe->pipe;
         }
         o->data = temp;
         data = temp;
-        PROFILE_ADD(pop_all_transform_ns, PROFILE_NOW_NS() - transform_start);
     }
 
     // printf("Function pointer in popall: %p\n", (void *)o->subscriber);
@@ -253,16 +126,12 @@ void pop_all(Observable *o)
         o->ready = false; // Only ever ready once, wait until we are set to being ready again
     }
 
-    uint64_t drain_start = PROFILE_NOW_NS();
     while (!list_isempty(data))
     {
         void *d = popstart(data); // pop from front (FIFO)
         if (isStreamComplete(d))
         {
             o->complete = true;
-            PROFILE_INC(pop_all_calls);
-            PROFILE_ADD(pop_all_drain_ns, PROFILE_NOW_NS() - drain_start);
-            PROFILE_ADD(pop_all_ns, PROFILE_NOW_NS() - total_start);
             return;
         }
 
@@ -273,25 +142,16 @@ void pop_all(Observable *o)
         }
 
         o->subscriber(d);
-        PROFILE_INC(pop_all_emitted);
     }
-    PROFILE_INC(pop_all_calls);
-    PROFILE_ADD(pop_all_drain_ns, PROFILE_NOW_NS() - drain_start);
-    PROFILE_ADD(pop_all_ns, PROFILE_NOW_NS() - total_start);
 }
 
 Observable *range(int min, int max) // Inclusive range
 {
-    uint64_t start = PROFILE_NOW_NS();
     Observable *result = create_observable();
-    list_reserve(result->data, max - min + 1);
     for (int i = min; i < max + 1; ++i)
     {
         push_back(result->data, (void *)(long)(i));
     }
-    PROFILE_INC(range_calls);
-    PROFILE_ADD(range_ns, PROFILE_NOW_NS() - start);
-    PROFILE_ADD(range_items, (uint64_t)(max - min + 1));
     return result;
 }
 
@@ -356,18 +216,14 @@ Observable *pipe(Observable *self, int count, ...)
 }
 static List *filter_apply(List *data, void *ctx)
 {
-    uint64_t start = PROFILE_NOW_NS();
     FilterCtx *f = ctx;
-    List *result = init_list_with_capacity(data->size);
+    List *result = init_list();
     for (int i = 0; i < data->size; ++i)
     {
         void *item = list_get(data, i);
         if (f->pred(item))
             push_back(result, item);
     }
-    PROFILE_INC(filter_apply_calls);
-    PROFILE_ADD(filter_apply_ns, PROFILE_NOW_NS() - start);
-    PROFILE_ADD(filter_apply_items, (uint64_t)data->size);
     return result;
 }
 
@@ -378,7 +234,6 @@ Query *filter(BooleanFunction pred)
     Query *q = malloc(sizeof(*q));
     q->func = filter_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_FILTER;
     return q;
 }
 
@@ -418,7 +273,6 @@ Query *takeUntil(void *comp)
     Query *result = malloc(sizeof(Query));
     result->func = takeuntil_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 
@@ -456,7 +310,6 @@ Query *skipUntil(void *comp)
     Query *result = malloc(sizeof(Query));
     result->func = skipuntil_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 static List *distinct_apply(List *data, void *ctx)
@@ -493,7 +346,6 @@ Query *distinct(ModifierFunction comp)
     Query *result = malloc(sizeof(Query));
     result->func = distinct_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 static List *distinct_until_changed_apply(List *data, void *ctx)
@@ -521,7 +373,6 @@ Query *distinctUntilChanged(ModifierFunction comp)
     Query *result = malloc(sizeof(Query));
     result->func = distinct_until_changed_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 
@@ -553,7 +404,6 @@ Query *take(int number)
     Query *result = malloc(sizeof(Query));
     result->func = take_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 
@@ -579,7 +429,6 @@ Query *skip(int number)
     Query *result = malloc(sizeof(Query));
     result->func = skip_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 static List *take_while_apply(List *data, void *ctx)
@@ -627,7 +476,6 @@ Query *takeWhile(BooleanFunction func)
     Query *result = malloc(sizeof(Query));
     result->func = take_while_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 void flushOne(void *args)
@@ -678,7 +526,6 @@ Query *throttleTime(Observable *self, int time)
     Query *q = malloc(sizeof(Query));
     q->ctx = ctx;
     q->func = throttle_time_apply;
-    q->kind = QUERY_KIND_GENERIC;
     return q;
 }
 
@@ -690,7 +537,6 @@ Query *skipWhile(BooleanFunction func)
     Query *result = malloc(sizeof(Query));
     result->func = skip_while_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 
@@ -702,15 +548,13 @@ Query *first()
     Query *result = malloc(sizeof(Query));
     result->func = takeuntil_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
     return result;
 }
 
 static List *map_apply(List *data, void *ctx)
 {
-    uint64_t start = PROFILE_NOW_NS();
     MapCtx *m = ctx;
-    List *result = init_list_with_capacity(data->size);
+    List *result = init_list();
     for (int i = 0; i < data->size; ++i)
     {
         void *item = list_get(data, i);
@@ -720,9 +564,6 @@ static List *map_apply(List *data, void *ctx)
         }
         push_back(result, m->pred(item));
     }
-    PROFILE_INC(map_apply_calls);
-    PROFILE_ADD(map_apply_ns, PROFILE_NOW_NS() - start);
-    PROFILE_ADD(map_apply_items, (uint64_t)data->size);
     return result;
 }
 
@@ -733,7 +574,6 @@ Query *map(ModifierFunction mapper)
     Query *q = malloc(sizeof(*q));
     q->func = map_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_MAP;
     return q;
 }
 static List *mapTo_apply(List *data, void *ctx)
@@ -761,7 +601,6 @@ Query *mapTo(void *newitem)
     Query *q = malloc(sizeof(*q));
     q->func = mapTo_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_GENERIC;
 
     return q;
 }
@@ -808,7 +647,6 @@ Query *buffer(Observable *self, Observable *flusher)
     Query *q = malloc(sizeof(Query));
     q->ctx = ctx;
     q->func = buffer_apply;
-    q->kind = QUERY_KIND_GENERIC;
     return q;
 }
 
@@ -841,7 +679,6 @@ Query *mergeMap(Observable *o)
     Query *q = malloc(sizeof(*q));
     q->func = mergemap_apply;
     q->ctx = o; // No context required
-    q->kind = QUERY_KIND_GENERIC;
     return q;
 }
 
@@ -874,7 +711,6 @@ Query *scan(AccumulatorFunction accumulator)
     Query *q = malloc(sizeof(*q));
     q->func = scan_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_GENERIC;
     return q;
 }
 
@@ -886,15 +722,13 @@ Query *scanfrom(AccumulatorFunction accumulator, void *from)
     Query *q = malloc(sizeof(*q));
     q->func = scan_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_GENERIC;
     return q;
 }
 
 static List *reduce_apply(List *data, void *ctx)
 {
-    uint64_t start = PROFILE_NOW_NS();
     ScanCtx *m = ctx;
-    List *result = init_list_with_capacity(1);
+    List *result = init_list();
     void *accum = NULL;
     for (int i = 0; i < data->size; ++i)
     {
@@ -908,9 +742,6 @@ static List *reduce_apply(List *data, void *ctx)
     }
     push_back(result, accum);
 
-    PROFILE_INC(reduce_apply_calls);
-    PROFILE_ADD(reduce_apply_ns, PROFILE_NOW_NS() - start);
-    PROFILE_ADD(reduce_apply_items, (uint64_t)data->size);
     return result;
 }
 
@@ -922,7 +753,6 @@ Query *reduce(AccumulatorFunction accumulator)
     Query *q = malloc(sizeof(*q));
     q->func = reduce_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_REDUCE;
 
     return q;
 }
@@ -943,7 +773,6 @@ Query *last()
     Query *q = malloc(sizeof(*q));
     q->func = last_apply;
     q->ctx = NULL;
-    q->kind = QUERY_KIND_GENERIC;
     return q;
 }
 
@@ -986,3 +815,4 @@ Observable *zip(int count, ...)
     }
     return result;
 }
+
