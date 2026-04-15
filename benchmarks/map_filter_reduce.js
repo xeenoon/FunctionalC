@@ -1,8 +1,8 @@
 const { range } = require('rxjs');
 const { map, filter, reduce } = require('rxjs/operators');
 
-const N = 1000000;
-const RUNS = 5;
+const N    = parseInt(process.argv[2]) || 1000000;
+const RUNS = parseInt(process.argv[3]) || 5;
 
 let result = 0;
 let totalMs = 0;

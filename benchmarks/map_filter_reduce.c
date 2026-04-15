@@ -19,9 +19,9 @@ void *add(void *accum, void *next) {
     return (void *)((long)accum + (long)next);
 }
 
-int main() {
-    int N = 1000000;
-    int RUNS = 5;
+int main(int argc, char *argv[]) {
+    int N    = argc > 1 ? atoi(argv[1]) : 1000000;
+    int RUNS = argc > 2 ? atoi(argv[2]) : 5;
     long total_ns = 0;
 
     for (int run = 0; run < RUNS; ++run) {

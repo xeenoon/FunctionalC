@@ -18,8 +18,8 @@
 generated_*.c
 
 # Generated output directory
-/out/*
-!/out/.gitkeep
+core/out/*
+!core/out/.gitkeep
 
 # Common temp files
 *.tmp

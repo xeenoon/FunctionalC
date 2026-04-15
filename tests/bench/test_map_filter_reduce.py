@@ -1,4 +1,4 @@
-from tests.models import BenchmarkResult
+from models import BenchmarkResult
 
 
 SCENARIO = 'map_filter_reduce'

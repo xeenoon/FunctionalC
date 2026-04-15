@@ -2,7 +2,7 @@ CORE    = ../core/src
 CC      = gcc
 CFLAGS  = -Wall -Wextra -I$(CORE)
 LDFLAGS = -lpthread
-CORE_SRCS = $(CORE)/observable.c $(CORE)/list.c $(CORE)/task.c $(CORE)/stopwatch.c
+CORE_SRCS = $(CORE)/observable.c $(CORE)/list.c $(CORE)/task.c $(CORE)/stopwatch.c $(CORE)/profiler.c
 
 SCENARIOS = map_filter_reduce
 
