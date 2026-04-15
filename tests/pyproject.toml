@@ -1,0 +1,34 @@
+[project]
+name = "functionalc-tests"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "pytest",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+
+[tool.ruff]
+exclude = [
+    ".venv"
+]
+
+target-version="py314"
+
+line-length=80
+indent-width=4
+
+[tool.ruff.lint]
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+indent-style="space"
+quote-style="single"
+
+line-ending="auto"
+skip-magic-trailing-comma=false
+
+docstring-code-format=true
+docstring-code-line-length="dynamic"
