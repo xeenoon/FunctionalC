@@ -1,0 +1,11 @@
+{
+  "name": "functionalc-benchmarks",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "bench": "node map_filter_reduce.js"
+  },
+  "dependencies": {
+    "rxjs": "^7.8.0"
+  }
+}
