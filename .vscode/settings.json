@@ -34,7 +34,7 @@
     "ruff.configuration": "${workspaceFolder}/tests/pyproject.toml",
 
     // Ignore dependency folders in workspace tooling.
-    "typescript.tsserver.watchOptions": {
+    "ts.tsserver.watchOptions": {
         "excludeDirectories": [
             "**/node_modules"
         ]
