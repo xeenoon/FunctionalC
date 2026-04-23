@@ -806,7 +806,15 @@ bool rx_try_emit_graph_optimized_loop_body(
     RxExpr *current = pipeline->source_kind == RX_LOOP_SOURCE_RANGE ? rx_new_var("src") : NULL;
     bool has_value_decl = false;
     bool ok = true;
-    if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n"))
+    if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_MERGE_MAP_RANGE)
+    {
+        if (!rx_string_builder_append_format(out, "    for (intptr_t right = 1; right <= (intptr_t)%d; ++right) {\n", pipeline->source_inner_n)
+            || !rx_string_builder_append(out, "        for (intptr_t src = 1; src <= N; ++src) {\n"))
+        {
+            return false;
+        }
+    }
+    else if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n"))
     {
         return false;
     }
@@ -814,6 +822,11 @@ bool rx_try_emit_graph_optimized_loop_body(
     {
         ok = rx_string_builder_append(out, "        intptr_t left = src;\n")
             && rx_string_builder_append(out, "        intptr_t right = src;\n");
+    }
+    else if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_MERGE_MAP_RANGE)
+    {
+        ok = rx_string_builder_append(out, "            intptr_t zipped_left = src;\n")
+            && rx_string_builder_append(out, "            intptr_t zipped_right = src;\n");
     }
     if (!ok)
     {
@@ -837,6 +850,20 @@ bool rx_try_emit_graph_optimized_loop_body(
                 ok = try_parse_function_expression(options->helper_source_text, fn, params, args, 2, &expr);
                 rx_free_expr(args[0]);
                 rx_free_expr(args[1]);
+                if (!ok) { break; }
+                rx_free_expr(current);
+                current = expr;
+                has_value_decl = false;
+                break;
+            }
+            case RX_OP_CALL_TRIPLE_MAP:
+            {
+                const char *params[] = { "zipped_left_raw", "zipped_right_raw", "right_raw" };
+                RxExpr *args[] = { rx_new_var("zipped_left"), rx_new_var("zipped_right"), rx_new_var("right") };
+                ok = try_parse_function_expression(options->helper_source_text, fn, params, args, 3, &expr);
+                rx_free_expr(args[0]);
+                rx_free_expr(args[1]);
+                rx_free_expr(args[2]);
                 if (!ok) { break; }
                 rx_free_expr(current);
                 current = expr;
@@ -924,5 +951,9 @@ bool rx_try_emit_graph_optimized_loop_body(
     }
 
     rx_free_expr(current);
+    if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_MERGE_MAP_RANGE)
+    {
+        return rx_string_builder_append(out, "        }\n    }\n");
+    }
     return rx_string_builder_append(out, "    }\n");
 }

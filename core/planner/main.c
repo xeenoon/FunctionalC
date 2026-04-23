@@ -167,6 +167,17 @@ static bool parse_spec(
             {
                 set_literal_argument(&pipeline->source.arguments[0], 2);
             }
+            else if (strcmp(source_name, "zip_merge_map_range") == 0)
+            {
+                int inner_n = 0;
+                char *inner_n_text = strtok(NULL, " \t");
+                if (inner_n_text == NULL || !parse_int_literal(inner_n_text, &inner_n))
+                {
+                    fclose(file);
+                    return false;
+                }
+                set_literal_argument(&pipeline->source.arguments[0], inner_n);
+            }
             continue;
         }
 
@@ -184,6 +195,7 @@ static bool parse_spec(
 
         if (strcmp(token, "map") == 0
             || strcmp(token, "pairMap") == 0
+            || strcmp(token, "tripleMap") == 0
             || strcmp(token, "filter") == 0
             || strcmp(token, "scan") == 0
             || strcmp(token, "takeWhile") == 0

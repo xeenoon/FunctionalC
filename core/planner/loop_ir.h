@@ -41,6 +41,7 @@ typedef enum
 {
     RX_OP_ASSIGN_INPUT,
     RX_OP_CALL_PAIR_MAP,
+    RX_OP_CALL_TRIPLE_MAP,
     RX_OP_CALL_MAP,
     RX_OP_CALL_MAP_CHAIN,
     RX_OP_CALL_FILTER,
@@ -71,6 +72,7 @@ typedef struct
     const char *pipeline_name;
     int segment_index;
     RxLoopSourceKind source_kind;
+    int source_inner_n;
     RxStateSlot *state_slots;
     int state_slot_count;
     RxLoopOp *ops;

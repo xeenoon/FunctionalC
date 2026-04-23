@@ -83,7 +83,7 @@ bool rx_lower_pipeline_segment(
         append_diag(
             diagnostics,
             RX_DIAG_UNSUPPORTED_SOURCE,
-            "Lowering currently only supports range() and zip_range() sources",
+            "Lowering currently only supports range(), zip_range(), and zip_merge_map_range() sources",
             NULL,
             0,
             -1);
@@ -98,12 +98,21 @@ bool rx_lower_pipeline_segment(
     {
         lowered->source_kind = RX_LOOP_SOURCE_ZIP_RANGE;
     }
+    else if (strcmp(pipeline->source.signature->name, "zip_merge_map_range") == 0)
+    {
+        lowered->source_kind = RX_LOOP_SOURCE_ZIP_MERGE_MAP_RANGE;
+        if (pipeline->source.arguments[0].kind == RX_BINDING_LITERAL
+            && pipeline->source.arguments[0].as.literal.kind == RX_LITERAL_INT)
+        {
+            lowered->source_inner_n = pipeline->source.arguments[0].as.literal.as.int_value;
+        }
+    }
     else
     {
         append_diag(
             diagnostics,
             RX_DIAG_UNSUPPORTED_SOURCE,
-            "Lowering currently only supports range() and zip_range() sources",
+            "Lowering currently only supports range(), zip_range(), and zip_merge_map_range() sources",
             pipeline->source.signature->name,
             0,
             -1);
@@ -123,6 +132,9 @@ bool rx_lower_pipeline_segment(
         {
             case RX_STAGE_PAIR_MAP:
                 op.kind = RX_OP_CALL_PAIR_MAP;
+                break;
+            case RX_STAGE_TRIPLE_MAP:
+                op.kind = RX_OP_CALL_TRIPLE_MAP;
                 break;
             case RX_STAGE_MAP:
                 op.kind = RX_OP_CALL_MAP;

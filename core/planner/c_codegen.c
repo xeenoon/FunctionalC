@@ -392,6 +392,9 @@ static bool emit_function_declarations(const RxLoweredPipeline *pipeline, const 
             case RX_OP_CALL_PAIR_MAP:
                 if (!rx_string_builder_append_format(out, "extern void *%s(void *left_raw, void *right_raw);\n", name)) return false;
                 break;
+            case RX_OP_CALL_TRIPLE_MAP:
+                if (!rx_string_builder_append_format(out, "extern void *%s(void *zipped_left_raw, void *zipped_right_raw, void *right_raw);\n", name)) return false;
+                break;
             case RX_OP_CALL_MAP:
             case RX_OP_CALL_MAP_CHAIN:
             case RX_OP_CALL_MAP_TO:
@@ -420,6 +423,7 @@ static const char *op_label(const RxLoopOp *op)
     switch (op->kind)
     {
         case RX_OP_CALL_PAIR_MAP: return "pairMap";
+        case RX_OP_CALL_TRIPLE_MAP: return "tripleMap";
         case RX_OP_CALL_MAP: return "map";
         case RX_OP_CALL_FILTER: return "filter";
         case RX_OP_CALL_SCAN: return "scan";
@@ -519,6 +523,17 @@ static bool emit_loop_body(const RxLoweredPipeline *pipeline, const RxCCodegenOp
             return false;
         }
     }
+    else if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_MERGE_MAP_RANGE)
+    {
+        if (!rx_string_builder_append_format(out, "    for (intptr_t right = 1; right <= (intptr_t)%d; ++right) {\n", pipeline->source_inner_n)
+            || !rx_string_builder_append(out, "        for (intptr_t src = 1; src <= N; ++src) {\n")
+            || !rx_string_builder_append(out, "            intptr_t zipped_left = src;\n")
+            || !rx_string_builder_append(out, "            intptr_t zipped_right = src;\n")
+            || !rx_string_builder_append(out, "            intptr_t value = 0;\n"))
+        {
+            return false;
+        }
+    }
     else if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n")
              || !rx_string_builder_append(out, "        intptr_t value = src;\n"))
     {
@@ -563,6 +578,25 @@ static bool emit_loop_body(const RxLoweredPipeline *pipeline, const RxCCodegenOp
                     }
                 }
                 else if (!rx_string_builder_append_format(out, "        value = (intptr_t)%s((void *)(intptr_t)left, (void *)(intptr_t)right);\n", fn))
+                {
+                    return false;
+                }
+                break;
+            }
+            case RX_OP_CALL_TRIPLE_MAP:
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)zipped_left", "(void *)(intptr_t)zipped_right", "(void *)(intptr_t)right" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 3, result_name, done_label)
+                        || !rx_string_builder_append_format(out, "        value = (intptr_t)%s;\n", result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(out, "        value = (intptr_t)%s((void *)(intptr_t)zipped_left, (void *)(intptr_t)zipped_right, (void *)(intptr_t)right);\n", fn))
                 {
                     return false;
                 }
@@ -683,6 +717,10 @@ static bool emit_loop_body(const RxLoweredPipeline *pipeline, const RxCCodegenOp
         if (can_inline) free_inline_function(&function);
     }
 
+    if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_MERGE_MAP_RANGE)
+    {
+        return rx_string_builder_append(out, "        }\n    }\n");
+    }
     return rx_string_builder_append(out, "    }\n");
 }
 

@@ -459,7 +459,7 @@ SCENARIOS = (
         n=1_000_000,
         runs=1,
         source=SourceSpec('zip_merge_map_range', inner_n=1),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=_zip_mergemap_stateful_chain(1000),
     ),
     BenchmarkScenario(
@@ -670,6 +670,8 @@ def _c_function(spec: FunctionSpec) -> str:
 def _planner_helper_prototype(spec: FunctionSpec) -> str:
     if spec.name == 'pairSum':
         return 'void *pairSum(void *left_raw, void *right_raw);'
+    if spec.name == 'tripleSum':
+        return 'void *tripleSum(void *zipped_left_raw, void *zipped_right_raw, void *right_raw);'
     if spec.kind == 'predicate':
         return f'bool {spec.name}(void *raw);'
     if spec.kind == 'accumulator':
@@ -684,6 +686,14 @@ def _planner_helper_function(spec: FunctionSpec) -> str:
             'intptr_t left = (intptr_t)left_raw; '
             'intptr_t right = (intptr_t)right_raw; '
             'return (void *)(intptr_t)(left + right); }'
+        )
+    if spec.name == 'tripleSum':
+        return (
+            'void *tripleSum(void *zipped_left_raw, void *zipped_right_raw, void *right_raw) { '
+            'intptr_t zipped_left = (intptr_t)zipped_left_raw; '
+            'intptr_t zipped_right = (intptr_t)zipped_right_raw; '
+            'intptr_t right = (intptr_t)right_raw; '
+            'return (void *)(intptr_t)(zipped_left + zipped_right + right); }'
         )
     if spec.kind == 'predicate':
         return (
@@ -705,12 +715,13 @@ def _planner_helper_function(spec: FunctionSpec) -> str:
 
 
 def planner_backend_supported(scenario: BenchmarkScenario) -> bool:
-    if scenario.source.kind not in {'range', 'zip_range'}:
+    if scenario.source.kind not in {'range', 'zip_range', 'zip_merge_map_range'}:
         return False
 
     supported_ops = {
         'map',
         'pairMap',
+        'tripleMap',
         'filter',
         'scan',
         'reduce',
@@ -726,6 +737,12 @@ def planner_backend_supported(scenario: BenchmarkScenario) -> bool:
         return False
     if scenario.source.kind == 'zip_range':
         return len(scenario.ops) > 0 and scenario.ops[0].kind == 'pairMap'
+    if scenario.source.kind == 'zip_merge_map_range':
+        return (
+            scenario.source.inner_n is not None
+            and len(scenario.ops) > 0
+            and scenario.ops[0].kind == 'tripleMap'
+        )
     return True
 
 
@@ -733,10 +750,15 @@ def generate_planner_spec(scenario: BenchmarkScenario) -> str:
     if not planner_backend_supported(scenario):
         raise ValueError(f'Planner backend does not support scenario {scenario.name}')
 
-    source_name = 'zip_range' if scenario.source.kind == 'zip_range' else 'range'
-    lines = [f'pipeline {scenario.name}', f'source {source_name}']
+    if scenario.source.kind == 'zip_range':
+        source_line = 'source zip_range'
+    elif scenario.source.kind == 'zip_merge_map_range':
+        source_line = f'source zip_merge_map_range {scenario.source.inner_n}'
+    else:
+        source_line = 'source range'
+    lines = [f'pipeline {scenario.name}', source_line]
     for op in scenario.ops:
-        if op.kind in {'map', 'pairMap', 'filter', 'scan', 'takeWhile', 'skipWhile', 'distinctUntilChanged'}:
+        if op.kind in {'map', 'pairMap', 'tripleMap', 'filter', 'scan', 'takeWhile', 'skipWhile', 'distinctUntilChanged'}:
             lines.append(f'{op.kind} {op.arg}')
         elif op.kind == 'reduce':
             if op.extra is None:

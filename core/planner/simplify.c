@@ -38,6 +38,10 @@ static RxPlannedStageKind planned_stage_kind(const RxFunctionSignature *signatur
     {
         return RX_STAGE_PAIR_MAP;
     }
+    if (strcmp(signature->name, "tripleMap") == 0)
+    {
+        return RX_STAGE_TRIPLE_MAP;
+    }
     if (strcmp(signature->name, "filter") == 0)
     {
         return RX_STAGE_FILTER;
@@ -93,7 +97,8 @@ static bool source_is_self_contained(const RxSourceCall *source)
 {
     return source->signature != NULL
         && (strcmp(source->signature->name, "range") == 0
-            || strcmp(source->signature->name, "zip_range") == 0);
+            || strcmp(source->signature->name, "zip_range") == 0
+            || strcmp(source->signature->name, "zip_merge_map_range") == 0);
 }
 
 static bool stage_is_self_contained(const RxStageCall *stage)
@@ -107,6 +112,7 @@ static bool stage_is_self_contained(const RxStageCall *stage)
     {
         case RX_STAGE_MAP:
         case RX_STAGE_PAIR_MAP:
+        case RX_STAGE_TRIPLE_MAP:
         case RX_STAGE_FILTER:
         case RX_STAGE_SCAN:
         case RX_STAGE_SCAN_FROM:
@@ -157,7 +163,7 @@ bool rx_build_execution_plan(
             if (!append_diag(
                     diagnostics,
                     RX_DIAG_UNSUPPORTED_SOURCE,
-                    "Only self-contained range() sources are supported in the planner backend",
+                    "Only self-contained range()/zip sources are supported in the planner backend",
                     source_pipeline->source.signature != NULL ? source_pipeline->source.signature->name : NULL,
                     pipeline_index,
                     -1))
@@ -253,6 +259,26 @@ bool rx_build_execution_plan(
                         diagnostics,
                         RX_DIAG_UNLOWERABLE_PIPELINE,
                         "zip_range planner pipelines must start with pairMap to become scalar",
+                        planned->name,
+                        pipeline_index,
+                        0))
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (planned->transpile_candidate
+            && source_pipeline->source.signature != NULL
+            && strcmp(source_pipeline->source.signature->name, "zip_merge_map_range") == 0)
+        {
+            if (source_pipeline->stage_count == 0 || planned->stages[0].kind != RX_STAGE_TRIPLE_MAP)
+            {
+                planned->transpile_candidate = false;
+                if (!append_diag(
+                        diagnostics,
+                        RX_DIAG_UNLOWERABLE_PIPELINE,
+                        "zip_merge_map_range planner pipelines must start with tripleMap to become scalar",
                         planned->name,
                         pipeline_index,
                         0))
