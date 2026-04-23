@@ -6,11 +6,11 @@ In practical terms, the project is aimed at workloads where large volumes of dat
 
 ## Performance Summary
 
-The current benchmark suite shows the same overall pattern across the tested scenarios:
+FunctionalC is designed for backend-scale observable processing: high-throughput streams, joined streams, fan-out style pipelines, and long chains of synchronous operators. The benchmark suite shows the same overall pattern across the tested scenarios:
 
 - for smaller synchronous pipelines, the raw C path is typically around 100x faster than the TypeScript/RxJS version
 - the DSL-transpiled C path is also consistently faster than TypeScript/RxJS, while preserving the observable-style pipeline shape
-- for heavier backend-style stress cases, especially very deep operator chains, zipped streams, or very large data volumes, the gap becomes much larger
+- for heavier backend-style stress cases, especially very deep operator chains, zipped streams, mixed observable sources, or very large data volumes, the gap becomes much larger
 
 This is the main purpose of the library: to make backend scaling with RxJS-style pipelines viable when the workload is too large or too latency-sensitive for a standard TypeScript implementation.
 
@@ -22,8 +22,11 @@ Examples from the current benchmark output:
 - `s12_chain_10000_x1000_items`: raw C `0.00010 ms` vs TypeScript `20.08890 ms`, with the TypeScript/RxJS version also failing to produce the expected result in that stress case
 - `s13_zip_complex_small`: raw C `0.02273 ms` vs TypeScript `7.01493 ms`, an exact speedup of `308.62x` for a zipped, stateful operator chain
 - `s14_zip_complex_large`: raw C `0.51960 ms` vs TypeScript `53568.75100 ms`, an exact speedup of `103096.13x` for a larger backend-style zipped workload
+- `s20_zip_stateful_chain_50_x2_large`: raw C `0.71910 ms` vs TypeScript `224264.68860 ms`, an exact speedup of `311868.57x` for a million-item zipped stream passing through a stateful operator chain
+- `s25_zip_mergemap_zip_bottleneck_1000_chain`: raw C `0.91480 ms` vs TypeScript `218101.70560 ms`, an exact speedup of `238414.63x` for a mixed `zip(...) -> mergeMap(...)` pipeline with 1000 chained operators
+- `s27_zip_mergemap_zip_bottleneck_5000_chain`: raw C returned the correct result, `100000200000`, in `1.01850 ms`; TypeScript/RxJS returned `0` in `6.85580 ms`, so the benchmark is not counted as a speedup because the RxJS result was incorrect
 
-Taken together, these benchmarks show the intended use case of the library clearly: for ordinary backend pipeline work, the system is often around 100x faster than the equivalent TypeScript/RxJS implementation, and for heavy-duty workloads involving deep chains, zipped streams, or large-scale throughput, the measured gap can reach into the thousands or even more than 10000x faster depending on the scenario.
+Taken together, these benchmarks show the intended use case of the library clearly: for ordinary backend pipeline work, the system is often around 100x faster than the equivalent TypeScript/RxJS implementation, and for heavy-duty workloads involving deep chains, zipped streams, mixed observable sources, or large-scale throughput, the measured gap can reach hundreds of thousands of times faster. The 5000-operator mixed-source case also shows a correctness boundary for RxJS under extreme backend-style chaining: the C path completed correctly, while the TypeScript/RxJS path produced the wrong result.
 
 The repository currently contains:
 

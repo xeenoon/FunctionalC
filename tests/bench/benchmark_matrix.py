@@ -25,6 +25,7 @@ class Operation:
 @dataclass(frozen=True)
 class SourceSpec:
     kind: str = 'range'
+    inner_n: int | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,8 @@ class BenchmarkScenario:
                 parts.append('last()')
             elif op.kind == 'pairMap':
                 parts.append(f'map({op.arg})')
+            elif op.kind == 'tripleMap':
+                parts.append(f'map({op.arg})')
             else:
                 parts.append(op.kind)
         if len(parts) > 16:
@@ -61,6 +64,13 @@ class BenchmarkScenario:
             return 'range(1, N)'
         if self.source.kind == 'zip_range':
             return 'zip(range(1, N), range(1, N))'
+        if self.source.kind == 'merge_map_range':
+            return f'mergeMap(range(1, N), range(1, {self.source.inner_n}))'
+        if self.source.kind == 'zip_merge_map_range':
+            return (
+                f'zip(range(1, N), range(1, N))'
+                f' -> mergeMap(range(1, {self.source.inner_n}))'
+            )
         return self.source.kind
 
 
@@ -146,11 +156,58 @@ FUNCTIONS = {
         'pair[0] + pair[1]',
         lambda pair: pair[0] + pair[1],
     ),
+    'tripleSum': _value_func(
+        'tripleSum',
+        'tripleSum(x)',
+        'x',
+        'triple[0][0] + triple[0][1] + triple[1]',
+        lambda triple: triple[0][0] + triple[0][1] + triple[1],
+    ),
 }
 
 
 def _long_map_chain(length: int) -> tuple[Operation, ...]:
     ops: list[Operation] = []
+    for index in range(length):
+        ops.append(Operation('map', 'add1' if index % 2 == 0 else 'sub1'))
+    ops.append(Operation('last'))
+    return tuple(ops)
+
+
+def _zip_pair_map_chain(length: int) -> tuple[Operation, ...]:
+    ops: list[Operation] = [Operation('pairMap', 'pairSum')]
+    for index in range(length):
+        ops.append(Operation('map', 'add1' if index % 2 == 0 else 'sub1'))
+    ops.append(Operation('last'))
+    return tuple(ops)
+
+
+def _zip_stateful_chain(length: int) -> tuple[Operation, ...]:
+    ops: list[Operation] = [
+        Operation('pairMap', 'pairSum'),
+        Operation('scan', 'sum'),
+        Operation('map', 'div10'),
+        Operation('distinctUntilChanged', 'identity'),
+        Operation('skipWhile', 'lt5000'),
+    ]
+    for index in range(length):
+        ops.append(Operation('map', 'add1' if index % 2 == 0 else 'sub1'))
+    ops.append(Operation('last'))
+    return tuple(ops)
+
+
+def _mergemap_stateful_chain(length: int) -> tuple[Operation, ...]:
+    return _zip_stateful_chain(length)
+
+
+def _zip_mergemap_stateful_chain(length: int) -> tuple[Operation, ...]:
+    ops: list[Operation] = [
+        Operation('tripleMap', 'tripleSum'),
+        Operation('scan', 'sum'),
+        Operation('map', 'div10'),
+        Operation('distinctUntilChanged', 'identity'),
+        Operation('skipWhile', 'lt5000'),
+    ]
     for index in range(length):
         ops.append(Operation('map', 'add1' if index % 2 == 0 else 'sub1'))
     ops.append(Operation('last'))
@@ -296,82 +353,245 @@ SCENARIOS = (
             Operation('last'),
         ),
     ),
+    BenchmarkScenario(
+        's15_mergemap_complex_small',
+        n=1_000,
+        runs=3,
+        source=SourceSpec('merge_map_range', inner_n=1_000),
+        backends=('raw_c', 'typescript'),
+        ops=(
+            Operation('pairMap', 'pairSum'),
+            Operation('scan', 'sum'),
+            Operation('map', 'div10'),
+            Operation('distinctUntilChanged', 'identity'),
+            Operation('skipWhile', 'lt5000'),
+            Operation('last'),
+        ),
+    ),
+    BenchmarkScenario(
+        's16_mergemap_complex_large',
+        n=10_000,
+        runs=1,
+        source=SourceSpec('merge_map_range', inner_n=10_000),
+        backends=('raw_c', 'typescript'),
+        ops=(
+            Operation('pairMap', 'pairSum'),
+            Operation('scan', 'sum'),
+            Operation('map', 'div10'),
+            Operation('distinctUntilChanged', 'identity'),
+            Operation('skipWhile', 'lt5000'),
+            Operation('last'),
+        ),
+    ),
+    BenchmarkScenario(
+        's17_zip_chain_100_probe',
+        n=100_000,
+        runs=1,
+        source=SourceSpec('zip_range'),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_pair_map_chain(100),
+    ),
+    BenchmarkScenario(
+        's18_zip_stateful_chain_50_probe',
+        n=100_000,
+        runs=1,
+        source=SourceSpec('zip_range'),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_stateful_chain(50),
+    ),
+    BenchmarkScenario(
+        's19_zip_stateful_chain_50_large',
+        n=500_000,
+        runs=1,
+        source=SourceSpec('zip_range'),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_stateful_chain(50),
+    ),
+    BenchmarkScenario(
+        's20_zip_stateful_chain_50_x2_large',
+        n=1_000_000,
+        runs=1,
+        source=SourceSpec('zip_range'),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_stateful_chain(50),
+    ),
+    BenchmarkScenario(
+        's21_mergemap_stateful_chain_150_probe',
+        n=1_000,
+        runs=1,
+        source=SourceSpec('merge_map_range', inner_n=1_000),
+        backends=('raw_c', 'typescript'),
+        ops=_mergemap_stateful_chain(150),
+    ),
+    BenchmarkScenario(
+        's22_mergemap_stateful_chain_150_large',
+        n=3_000,
+        runs=1,
+        source=SourceSpec('merge_map_range', inner_n=3_000),
+        backends=('raw_c', 'typescript'),
+        ops=_mergemap_stateful_chain(150),
+    ),
+    BenchmarkScenario(
+        's23_zip_mergemap_complex_probe',
+        n=1_000,
+        runs=1,
+        source=SourceSpec('zip_merge_map_range', inner_n=100),
+        backends=('raw_c', 'typescript'),
+        ops=(
+            Operation('tripleMap', 'tripleSum'),
+            Operation('scan', 'sum'),
+            Operation('map', 'div10'),
+            Operation('distinctUntilChanged', 'identity'),
+            Operation('skipWhile', 'lt5000'),
+            Operation('last'),
+        ),
+    ),
+    BenchmarkScenario(
+        's24_zip_mergemap_stateful_chain_150_large',
+        n=3_000,
+        runs=1,
+        source=SourceSpec('zip_merge_map_range', inner_n=1_000),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_mergemap_stateful_chain(150),
+    ),
+    BenchmarkScenario(
+        's25_zip_mergemap_zip_bottleneck_1000_chain',
+        n=1_000_000,
+        runs=1,
+        source=SourceSpec('zip_merge_map_range', inner_n=1),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_mergemap_stateful_chain(1000),
+    ),
+    BenchmarkScenario(
+        's26_zip_stateful_chain_50_x3_huge',
+        n=3_000_000,
+        runs=1,
+        source=SourceSpec('zip_range'),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_stateful_chain(50),
+    ),
+    BenchmarkScenario(
+        's27_zip_mergemap_zip_bottleneck_5000_chain',
+        n=1_000_000,
+        runs=1,
+        source=SourceSpec('zip_merge_map_range', inner_n=1),
+        backends=('raw_c', 'typescript'),
+        ops=_zip_mergemap_stateful_chain(5_000),
+    ),
 )
 
 
 def expected_result(scenario: BenchmarkScenario) -> int:
     if scenario.source.kind == 'range':
-        values = list(range(1, scenario.n + 1))
+        values = iter(range(1, scenario.n + 1))
     elif scenario.source.kind == 'zip_range':
-        values = [(value, value) for value in range(1, scenario.n + 1)]
+        values = ((value, value) for value in range(1, scenario.n + 1))
+    elif scenario.source.kind == 'merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('merge_map_range scenarios require inner_n')
+        values = (
+            (left, right)
+            for right in range(1, inner_n + 1)
+            for left in range(1, scenario.n + 1)
+        )
+    elif scenario.source.kind == 'zip_merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('zip_merge_map_range scenarios require inner_n')
+        values = (
+            ((left, left), right)
+            for right in range(1, inner_n + 1)
+            for left in range(1, scenario.n + 1)
+        )
     else:
         raise ValueError(f'Unsupported scenario source for evaluator: {scenario.source.kind}')
 
-    for op in scenario.ops:
-        if op.kind == 'map':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            values = [int(fn(value)) for value in values]
-        elif op.kind == 'pairMap':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            values = [int(fn(value)) for value in values]
-        elif op.kind == 'filter':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            values = [value for value in values if bool(fn(value))]
-        elif op.kind == 'reduce':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            accum = int(op.extra or 0)
-            for value in values:
-                accum = int(fn(accum, value))
-            values = [accum]
-        elif op.kind == 'scan':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            accum = 0
-            scanned: list[int] = []
-            for value in values:
-                accum = int(fn(accum, value))
-                scanned.append(accum)
-            values = scanned
-        elif op.kind == 'take':
-            values = values[: int(op.arg)]
-        elif op.kind == 'skip':
-            values = values[int(op.arg) :]
-        elif op.kind == 'takeWhile':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            taken: list[int] = []
-            for value in values:
-                if not bool(fn(value)):
-                    break
-                taken.append(value)
-            values = taken
-        elif op.kind == 'skipWhile':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            start = 0
-            for index, value in enumerate(values):
-                if not bool(fn(value)):
-                    start = index
-                    break
-            else:
-                start = len(values)
-            values = values[start:]
-        elif op.kind == 'distinctUntilChanged':
-            fn = FUNCTIONS[str(op.arg)].py_impl
-            distinct: list[int] = []
-            last_key: int | None = None
-            has_key = False
-            for value in values:
-                key = int(fn(value))
-                if has_key and key == last_key:
-                    continue
-                distinct.append(value)
-                last_key = key
-                has_key = True
-            values = distinct
-        elif op.kind == 'last':
-            values = values[-1:] if values else []
-        else:
-            raise ValueError(f'Unsupported scenario op for evaluator: {op.kind}')
+    uses_reduce = any(op.kind == 'reduce' for op in scenario.ops)
+    uses_last = any(op.kind == 'last' for op in scenario.ops)
+    reduce_accum = next((int(op.extra or 0) for op in scenario.ops if op.kind == 'reduce'), 0)
+    scan_accum = 0
+    take_count = 0
+    skip_count = 0
+    skip_while_passed = False
+    has_last_key = False
+    last_key = 0
+    has_last_value = False
+    last_value = 0
 
-    return values[-1] if values else 0
+    for initial_value in values:
+        value = initial_value
+        emit_value = True
+
+        for op in scenario.ops:
+            if op.kind == 'map':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                value = int(fn(value))
+            elif op.kind == 'pairMap':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                value = int(fn(value))
+            elif op.kind == 'tripleMap':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                value = int(fn(value))
+            elif op.kind == 'filter':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                if not bool(fn(value)):
+                    emit_value = False
+                    break
+            elif op.kind == 'reduce':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                reduce_accum = int(fn(reduce_accum, value))
+                emit_value = False
+                break
+            elif op.kind == 'scan':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                scan_accum = int(fn(scan_accum, value))
+                value = scan_accum
+            elif op.kind == 'take':
+                if take_count >= int(op.arg):
+                    emit_value = False
+                    break
+                take_count += 1
+            elif op.kind == 'skip':
+                if skip_count < int(op.arg):
+                    skip_count += 1
+                    emit_value = False
+                    break
+            elif op.kind == 'takeWhile':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                if not bool(fn(value)):
+                    emit_value = False
+                    break
+            elif op.kind == 'skipWhile':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                if not skip_while_passed and bool(fn(value)):
+                    emit_value = False
+                    break
+                skip_while_passed = True
+            elif op.kind == 'distinctUntilChanged':
+                fn = FUNCTIONS[str(op.arg)].py_impl
+                key = int(fn(value))
+                if has_last_key and key == last_key:
+                    emit_value = False
+                    break
+                last_key = key
+                has_last_key = True
+            elif op.kind == 'last':
+                last_value = int(value)
+                has_last_value = True
+                emit_value = False
+                break
+            else:
+                raise ValueError(f'Unsupported scenario op for evaluator: {op.kind}')
+
+        if not emit_value:
+            continue
+
+    if uses_reduce:
+        return reduce_accum
+    if uses_last:
+        return last_value if has_last_value else 0
+    return 0
 
 
 def _required_functions(scenario: BenchmarkScenario) -> list[FunctionSpec]:
@@ -402,6 +622,8 @@ def generate_dsl_source(scenario: BenchmarkScenario) -> str:
             op_lines.append(f'map({op.arg})')
         elif op.kind == 'pairMap':
             raise ValueError('DSL generation does not support pairMap operations')
+        elif op.kind == 'tripleMap':
+            raise ValueError('DSL generation does not support tripleMap operations')
         elif op.kind == 'filter':
             op_lines.append(f'filter({op.arg})')
         elif op.kind == 'reduce':
@@ -491,6 +713,32 @@ def generate_raw_c_source(scenario: BenchmarkScenario) -> str:
             '        bool emit_value = true;',
             '        bool break_after_emit = false;',
         ]
+    elif scenario.source.kind == 'merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('merge_map_range scenarios require inner_n')
+        body_lines = [
+            f'    for (intptr_t right = 1; right <= (intptr_t){inner_n}; ++right) {{',
+            '        for (intptr_t src = 1; src <= (intptr_t)N; ++src) {',
+            '            intptr_t left = src;',
+            '            intptr_t value = 0;',
+            '            bool emit_value = true;',
+            '            bool break_after_emit = false;',
+        ]
+    elif scenario.source.kind == 'zip_merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('zip_merge_map_range scenarios require inner_n')
+        body_lines = [
+            f'    for (intptr_t right = 1; right <= (intptr_t){inner_n}; ++right) {{',
+            '        for (intptr_t src = 1; src <= (intptr_t)N; ++src) {',
+            '            intptr_t left = src;',
+            '            intptr_t zipped_left = src;',
+            '            intptr_t zipped_right = src;',
+            '            intptr_t value = 0;',
+            '            bool emit_value = true;',
+            '            bool break_after_emit = false;',
+        ]
     else:
         raise ValueError(f'Unsupported raw C source: {scenario.source.kind}')
 
@@ -501,6 +749,10 @@ def generate_raw_c_source(scenario: BenchmarkScenario) -> str:
             if op.arg != 'pairSum':
                 raise ValueError(f'Unsupported pair map op: {op.arg}')
             body_lines.append('        value = left + right;')
+        elif op.kind == 'tripleMap':
+            if op.arg != 'tripleSum':
+                raise ValueError(f'Unsupported triple map op: {op.arg}')
+            body_lines.append('        value = zipped_left + zipped_right + right;')
         elif op.kind == 'filter':
             body_lines.append(f'        if (!{op.arg}(value)) {{ continue; }}')
         elif op.kind == 'reduce':
@@ -541,8 +793,13 @@ def generate_raw_c_source(scenario: BenchmarkScenario) -> str:
         else:
             raise ValueError(f'Unsupported raw C op: {op.kind}')
 
-    body_lines.append('        if (break_after_emit) { break; }')
-    body_lines.append('    }')
+    if scenario.source.kind in {'merge_map_range', 'zip_merge_map_range'}:
+        body_lines.append('            if (break_after_emit) { break; }')
+        body_lines.append('        }')
+        body_lines.append('    }')
+    else:
+        body_lines.append('        if (break_after_emit) { break; }')
+        body_lines.append('    }')
     if uses_reduce:
         body_lines.append('    return (int64_t)reduce_accum;')
     elif uses_last:
@@ -602,6 +859,8 @@ def generate_ts_source(scenario: BenchmarkScenario) -> str:
             source_names.add('map')
         elif op.kind == 'pairMap':
             source_names.add('map')
+        elif op.kind == 'tripleMap':
+            source_names.add('map')
         elif op.kind == 'filter':
             source_names.add('filter')
         elif op.kind == 'reduce':
@@ -623,6 +882,11 @@ def generate_ts_source(scenario: BenchmarkScenario) -> str:
 
     if scenario.source.kind == 'zip_range':
         source_names.add('zip')
+    if scenario.source.kind == 'merge_map_range':
+        source_names.add('mergeMap')
+    if scenario.source.kind == 'zip_merge_map_range':
+        source_names.add('zip')
+        source_names.add('mergeMap')
 
     helper_lines = '\n'.join(
         _ts_function(spec) for spec in _required_functions(scenario)
@@ -636,6 +900,10 @@ def generate_ts_source(scenario: BenchmarkScenario) -> str:
             if op.arg != 'pairSum':
                 raise ValueError(f'Unsupported TypeScript pairMap op: {op.arg}')
             pipe_lines.append('map((pair) => pair[0] + pair[1])')
+        elif op.kind == 'tripleMap':
+            if op.arg != 'tripleSum':
+                raise ValueError(f'Unsupported TypeScript tripleMap op: {op.arg}')
+            pipe_lines.append('map((triple) => triple[0][0] + triple[0][1] + triple[1])')
         elif op.kind == 'filter':
             pipe_lines.append(f'filter({op.arg})')
         elif op.kind == 'reduce':
@@ -662,6 +930,24 @@ def generate_ts_source(scenario: BenchmarkScenario) -> str:
         root_imports = 'range'
     elif scenario.source.kind == 'zip_range':
         source_expr = 'zip(range(1, N), range(1, N))'
+        root_imports = 'range, zip'
+    elif scenario.source.kind == 'merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('merge_map_range scenarios require inner_n')
+        source_expr = (
+            f'range(1, {inner_n}).pipe('
+            'mergeMap((right) => range(1, N).pipe(map((left) => [left, right]))))'
+        )
+        root_imports = 'range'
+    elif scenario.source.kind == 'zip_merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('zip_merge_map_range scenarios require inner_n')
+        source_expr = (
+            f'range(1, {inner_n}).pipe('
+            'mergeMap((right) => zip(range(1, N), range(1, N)).pipe(map((pair) => [pair, right]))))'
+        )
         root_imports = 'range, zip'
     else:
         raise ValueError(f'Unsupported TypeScript source: {scenario.source.kind}')
