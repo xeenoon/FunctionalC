@@ -10,6 +10,7 @@ typedef struct
     bool emit_main;
     bool emit_helpers;
     bool emit_segment_bridge;
+    bool enable_graph_optimizations;
     const char *header_path;
     const char *helper_source_text;
 } RxCCodegenOptions;

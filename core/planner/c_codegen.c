@@ -1,4 +1,5 @@
 #include "c_codegen.h"
+#include "graph_opt.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -317,12 +318,7 @@ static bool emit_rewritten_body(
             {
                 return false;
             }
-            bool ok = rx_string_builder_append_format(
-                out,
-                "%s = %s; goto %s;",
-                result_name,
-                expr,
-                done_label);
+            bool ok = rx_string_builder_append_format(out, "%s = %s; goto %s;", result_name, expr, done_label);
             free(expr);
             if (!ok)
             {
@@ -356,11 +352,7 @@ static bool emit_inline_call_block(
     }
     for (int index = 0; index < function->parameter_count && index < argument_count; ++index)
     {
-        if (!rx_string_builder_append_format(
-                out,
-                "            %s = %s;\n",
-                function->parameter_decls[index],
-                arguments[index]))
+        if (!rx_string_builder_append_format(out, "            %s = %s;\n", function->parameter_decls[index], arguments[index]))
         {
             return false;
         }
@@ -376,10 +368,7 @@ static bool emit_inline_call_block(
     return true;
 }
 
-static bool emit_function_declarations(
-    const RxLoweredPipeline *pipeline,
-    const RxCCodegenOptions *options,
-    RxStringBuilder *out)
+static bool emit_function_declarations(const RxLoweredPipeline *pipeline, const RxCCodegenOptions *options, RxStringBuilder *out)
 {
     for (int index = 0; index < pipeline->op_count; ++index)
     {
@@ -401,35 +390,23 @@ static bool emit_function_declarations(
         switch (op->kind)
         {
             case RX_OP_CALL_PAIR_MAP:
-                if (!rx_string_builder_append_format(out, "extern void *%s(void *left_raw, void *right_raw);\n", name))
-                {
-                    return false;
-                }
+                if (!rx_string_builder_append_format(out, "extern void *%s(void *left_raw, void *right_raw);\n", name)) return false;
                 break;
             case RX_OP_CALL_MAP:
             case RX_OP_CALL_MAP_CHAIN:
             case RX_OP_CALL_MAP_TO:
             case RX_OP_APPLY_DISTINCT:
             case RX_OP_APPLY_DISTINCT_UNTIL_CHANGED:
-                if (!rx_string_builder_append_format(out, "extern void *%s(void *raw);\n", name))
-                {
-                    return false;
-                }
+                if (!rx_string_builder_append_format(out, "extern void *%s(void *raw);\n", name)) return false;
                 break;
             case RX_OP_CALL_FILTER:
             case RX_OP_APPLY_TAKE_WHILE:
             case RX_OP_APPLY_SKIP_WHILE:
-                if (!rx_string_builder_append_format(out, "extern bool %s(void *raw);\n", name))
-                {
-                    return false;
-                }
+                if (!rx_string_builder_append_format(out, "extern bool %s(void *raw);\n", name)) return false;
                 break;
             case RX_OP_CALL_SCAN:
             case RX_OP_CALL_REDUCE:
-                if (!rx_string_builder_append_format(out, "extern void *%s(void *raw_accum, void *raw_next);\n", name))
-                {
-                    return false;
-                }
+                if (!rx_string_builder_append_format(out, "extern void *%s(void *raw_accum, void *raw_next);\n", name)) return false;
                 break;
             default:
                 break;
@@ -442,43 +419,26 @@ static const char *op_label(const RxLoopOp *op)
 {
     switch (op->kind)
     {
-        case RX_OP_CALL_PAIR_MAP:
-            return "pairMap";
-        case RX_OP_CALL_MAP:
-            return "map";
-        case RX_OP_CALL_FILTER:
-            return "filter";
-        case RX_OP_CALL_SCAN:
-            return "scan";
-        case RX_OP_CALL_REDUCE:
-            return "reduce";
-        case RX_OP_CALL_MAP_TO:
-            return "mapTo";
-        case RX_OP_APPLY_TAKE:
-            return "take";
-        case RX_OP_APPLY_SKIP:
-            return "skip";
-        case RX_OP_APPLY_TAKE_WHILE:
-            return "takeWhile";
-        case RX_OP_APPLY_SKIP_WHILE:
-            return "skipWhile";
-        case RX_OP_APPLY_DISTINCT_UNTIL_CHANGED:
-            return "distinctUntilChanged";
-        case RX_OP_APPLY_LAST:
-            return "last";
-        case RX_OP_APPLY_FIRST:
-            return "first";
-        default:
-            return "unknown";
+        case RX_OP_CALL_PAIR_MAP: return "pairMap";
+        case RX_OP_CALL_MAP: return "map";
+        case RX_OP_CALL_FILTER: return "filter";
+        case RX_OP_CALL_SCAN: return "scan";
+        case RX_OP_CALL_REDUCE: return "reduce";
+        case RX_OP_CALL_MAP_TO: return "mapTo";
+        case RX_OP_APPLY_TAKE: return "take";
+        case RX_OP_APPLY_SKIP: return "skip";
+        case RX_OP_APPLY_TAKE_WHILE: return "takeWhile";
+        case RX_OP_APPLY_SKIP_WHILE: return "skipWhile";
+        case RX_OP_APPLY_DISTINCT_UNTIL_CHANGED: return "distinctUntilChanged";
+        case RX_OP_APPLY_LAST: return "last";
+        case RX_OP_APPLY_FIRST: return "first";
+        default: return "unknown";
     }
 }
 
-static bool emit_profile_decls(
-    const RxLoweredPipeline *pipeline,
-    RxStringBuilder *out)
+static bool emit_profile_decls(const RxLoweredPipeline *pipeline, RxStringBuilder *out)
 {
-    if (!rx_string_builder_append(
-            out,
+    if (!rx_string_builder_append(out,
             "#ifdef RX_PLANNER_PROFILE\n"
             "typedef struct {\n"
             "    const char *name;\n"
@@ -489,26 +449,18 @@ static bool emit_profile_decls(
         return false;
     }
 
-    if (!rx_string_builder_append_format(
-            out,
-            "static RxProfileSlot rx_profile_slots_%s[] = {\n",
-            pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+    if (!rx_string_builder_append_format(out, "static RxProfileSlot rx_profile_slots_%s[] = {\n", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
     {
         return false;
     }
     for (int index = 0; index < pipeline->op_count; ++index)
     {
-        if (!rx_string_builder_append_format(
-                out,
-                "    {\"%s[%d]\", 0, 0},\n",
-                op_label(&pipeline->ops[index]),
-                index))
+        if (!rx_string_builder_append_format(out, "    {\"%s[%d]\", 0, 0},\n", op_label(&pipeline->ops[index]), index))
         {
             return false;
         }
     }
-    if (!rx_string_builder_append(
-            out,
+    if (!rx_string_builder_append(out,
             "};\n"
             "static uint64_t rx_profile_diff_ns(struct timespec start, struct timespec end) {\n"
             "    return (uint64_t)(end.tv_sec - start.tv_sec) * 1000000000ULL + (uint64_t)(end.tv_nsec - start.tv_nsec);\n"
@@ -518,31 +470,18 @@ static bool emit_profile_decls(
     {
         return false;
     }
-    if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+    if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline")
+        || !rx_string_builder_append(out, "[ID].hits += 1; rx_profile_slots_")
+        || !rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline")
+        || !rx_string_builder_append(out,
+               "[ID].total_ns += rx_profile_diff_ns(__rx_stage_start_##ID, __rx_stage_end_##ID); } while (0)\n"
+               "#else\n"
+               "#define RX_PROFILE_STAGE_BEGIN(ID) do { } while (0)\n"
+               "#define RX_PROFILE_STAGE_END(ID) do { } while (0)\n"
+               "#endif\n\n"))
     {
         return false;
     }
-    if (!rx_string_builder_append(
-            out,
-            "[ID].hits += 1; rx_profile_slots_"))
-    {
-        return false;
-    }
-    if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-    {
-        return false;
-    }
-    if (!rx_string_builder_append(
-            out,
-            "[ID].total_ns += rx_profile_diff_ns(__rx_stage_start_##ID, __rx_stage_end_##ID); } while (0)\n"
-            "#else\n"
-            "#define RX_PROFILE_STAGE_BEGIN(ID) do { } while (0)\n"
-            "#define RX_PROFILE_STAGE_END(ID) do { } while (0)\n"
-            "#endif\n\n"))
-    {
-        return false;
-    }
-
     return true;
 }
 
@@ -553,63 +492,35 @@ static bool emit_state_slot(RxStringBuilder *out, const RxStateSlot *slot)
         case RX_STATE_SKIP_WHILE_PASSED:
         case RX_STATE_HAS_LAST_VALUE:
         case RX_STATE_HAS_LAST_KEY:
-            return rx_string_builder_append_format(
-                out,
-                "    bool %s = %s;\n",
-                slot->name,
-                slot->initial_value.kind == RX_LITERAL_INT && slot->initial_value.as.int_value != 0 ? "true" : "false");
+            return rx_string_builder_append_format(out, "    bool %s = %s;\n", slot->name, slot->initial_value.kind == RX_LITERAL_INT && slot->initial_value.as.int_value != 0 ? "true" : "false");
         default:
             if (slot->initial_value.kind == RX_LITERAL_INT)
             {
-                return rx_string_builder_append_format(
-                    out,
-                    "    intptr_t %s = %" PRIdPTR ";\n",
-                    slot->name,
-                    (intptr_t)slot->initial_value.as.int_value);
+                return rx_string_builder_append_format(out, "    intptr_t %s = %" PRIdPTR ";\n", slot->name, (intptr_t)slot->initial_value.as.int_value);
             }
             if (slot->initial_value.kind == RX_LITERAL_LONG)
             {
-                return rx_string_builder_append_format(
-                    out,
-                    "    intptr_t %s = %" PRIdPTR ";\n",
-                    slot->name,
-                    (intptr_t)slot->initial_value.as.long_value);
+                return rx_string_builder_append_format(out, "    intptr_t %s = %" PRIdPTR ";\n", slot->name, (intptr_t)slot->initial_value.as.long_value);
             }
             return rx_string_builder_append_format(out, "    intptr_t %s = 0;\n", slot->name);
     }
 }
 
-static bool emit_loop_body(
-    const RxLoweredPipeline *pipeline,
-    const RxCCodegenOptions *options,
-    RxStringBuilder *out)
+static bool emit_loop_body(const RxLoweredPipeline *pipeline, const RxCCodegenOptions *options, RxStringBuilder *out)
 {
     unsigned inline_counter = 0;
     if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_RANGE)
     {
-        if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(out, "        intptr_t left = src;\n"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(out, "        intptr_t right = src;\n"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(out, "        intptr_t value = 0;\n"))
+        if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n")
+            || !rx_string_builder_append(out, "        intptr_t left = src;\n")
+            || !rx_string_builder_append(out, "        intptr_t right = src;\n")
+            || !rx_string_builder_append(out, "        intptr_t value = 0;\n"))
         {
             return false;
         }
     }
-    else if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n"))
-    {
-        return false;
-    }
-    if (pipeline->source_kind != RX_LOOP_SOURCE_ZIP_RANGE
-        && !rx_string_builder_append(out, "        intptr_t value = src;\n"))
+    else if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n")
+             || !rx_string_builder_append(out, "        intptr_t value = src;\n"))
     {
         return false;
     }
@@ -618,9 +529,7 @@ static bool emit_loop_body(
     {
         const RxLoopOp *op = &pipeline->ops[index];
         const RxPlannedStage *stage = op->stage;
-        const char *fn = stage != NULL && stage->primary_argument.kind == RX_BINDING_FUNCTION_NAME
-            ? stage->primary_argument.as.function_name
-            : NULL;
+        const char *fn = stage != NULL && stage->primary_argument.kind == RX_BINDING_FUNCTION_NAME ? stage->primary_argument.as.function_name : NULL;
         RxInlineFunction function;
         bool can_inline = fn != NULL && try_extract_inline_function(options != NULL ? options->helper_source_text : NULL, fn, &function);
         char result_name[32];
@@ -634,10 +543,7 @@ static bool emit_loop_body(
 
         if (!rx_string_builder_append_format(out, "        RX_PROFILE_STAGE_BEGIN(%d);\n", index))
         {
-            if (can_inline)
-            {
-                free_inline_function(&function);
-            }
+            if (can_inline) free_inline_function(&function);
             return false;
         }
 
@@ -656,10 +562,7 @@ static bool emit_loop_body(
                         return false;
                     }
                 }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        value = (intptr_t)%s((void *)(intptr_t)left, (void *)(intptr_t)right);\n",
-                             fn))
+                else if (!rx_string_builder_append_format(out, "        value = (intptr_t)%s((void *)(intptr_t)left, (void *)(intptr_t)right);\n", fn))
                 {
                     return false;
                 }
@@ -678,32 +581,7 @@ static bool emit_loop_body(
                         return false;
                     }
                 }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        value = (intptr_t)%s((void *)(intptr_t)value);\n",
-                             fn))
-                {
-                    return false;
-                }
-                break;
-            }
-            case RX_OP_CALL_FILTER:
-            {
-                if (can_inline)
-                {
-                    const char *args[] = { "(void *)(intptr_t)value" };
-                    if (!rx_string_builder_append_format(out, "        %s %s = false;\n", function.return_type, result_name)
-                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
-                        || !rx_string_builder_append_format(out, "        if (!%s) { continue; }\n", result_name))
-                    {
-                        free_inline_function(&function);
-                        return false;
-                    }
-                }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        if (!%s((void *)(intptr_t)value)) { continue; }\n",
-                             fn))
+                else if (!rx_string_builder_append_format(out, "        value = (intptr_t)%s((void *)(intptr_t)value);\n", fn))
                 {
                     return false;
                 }
@@ -711,181 +589,26 @@ static bool emit_loop_body(
             }
             case RX_OP_CALL_SCAN:
             {
+                char arg0[96];
+                snprintf(arg0, sizeof(arg0), "(void *)(intptr_t)%s", pipeline->state_slots[op->state_slot_index].name);
                 if (can_inline)
                 {
-                    char arg0[96];
-                    snprintf(
-                        arg0,
-                        sizeof(arg0),
-                        "(void *)(intptr_t)%s",
-                        pipeline->state_slots[op->state_slot_index].name);
-                    const char *args[] = {
-                        arg0,
-                        "(void *)(intptr_t)value",
-                    };
+                    const char *args[] = { arg0, "(void *)(intptr_t)value" };
                     if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
                         || !emit_inline_call_block(out, &function, args, 2, result_name, done_label)
-                        || !rx_string_builder_append_format(
-                               out,
-                               "        %s = (intptr_t)%s;\n",
-                               pipeline->state_slots[op->state_slot_index].name,
-                               result_name))
+                        || !rx_string_builder_append_format(out, "        %s = (intptr_t)%s;\n", pipeline->state_slots[op->state_slot_index].name, result_name))
                     {
                         free_inline_function(&function);
                         return false;
                     }
                 }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        %s = (intptr_t)%s((void *)(intptr_t)%s, (void *)(intptr_t)value);\n",
-                             pipeline->state_slots[op->state_slot_index].name,
-                             fn,
-                             pipeline->state_slots[op->state_slot_index].name))
+                else if (!rx_string_builder_append_format(out, "        %s = (intptr_t)%s((void *)(intptr_t)%s, (void *)(intptr_t)value);\n", pipeline->state_slots[op->state_slot_index].name, fn, pipeline->state_slots[op->state_slot_index].name))
                 {
                     return false;
                 }
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        value = %s;\n",
-                        pipeline->state_slots[op->state_slot_index].name))
+                if (!rx_string_builder_append_format(out, "        value = %s;\n", pipeline->state_slots[op->state_slot_index].name))
                 {
-                    free_inline_function(&function);
-                    return false;
-                }
-                break;
-            }
-            case RX_OP_CALL_REDUCE:
-            {
-                if (can_inline)
-                {
-                    char arg0[96];
-                    snprintf(
-                        arg0,
-                        sizeof(arg0),
-                        "(void *)(intptr_t)%s",
-                        pipeline->state_slots[op->state_slot_index].name);
-                    const char *args[] = {
-                        arg0,
-                        "(void *)(intptr_t)value",
-                    };
-                    if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
-                        || !emit_inline_call_block(out, &function, args, 2, result_name, done_label)
-                        || !rx_string_builder_append_format(
-                               out,
-                               "        %s = (intptr_t)%s;\n",
-                               pipeline->state_slots[op->state_slot_index].name,
-                               result_name))
-                    {
-                        free_inline_function(&function);
-                        return false;
-                    }
-                }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        %s = (intptr_t)%s((void *)(intptr_t)%s, (void *)(intptr_t)value);\n",
-                             pipeline->state_slots[op->state_slot_index].name,
-                             fn,
-                             pipeline->state_slots[op->state_slot_index].name))
-                {
-                    return false;
-                }
-                if (!rx_string_builder_append(out, "        continue;\n"))
-                {
-                    free_inline_function(&function);
-                    return false;
-                }
-                break;
-            }
-            case RX_OP_CALL_MAP_TO:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        value = %" PRIdPTR ";\n",
-                        (intptr_t)stage->primary_argument.as.literal.as.int_value))
-                {
-                    return false;
-                }
-                break;
-            case RX_OP_APPLY_TAKE:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        if (%s >= %" PRIdPTR ") { break; }\n",
-                        pipeline->state_slots[op->state_slot_index].name,
-                        (intptr_t)stage->primary_argument.as.literal.as.int_value))
-                {
-                    return false;
-                }
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s += 1;\n",
-                        pipeline->state_slots[op->state_slot_index].name))
-                {
-                    return false;
-                }
-                break;
-            case RX_OP_APPLY_SKIP:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        if (%s < %" PRIdPTR ") { %s += 1; continue; }\n",
-                        pipeline->state_slots[op->state_slot_index].name,
-                        (intptr_t)stage->primary_argument.as.literal.as.int_value,
-                        pipeline->state_slots[op->state_slot_index].name))
-                {
-                    return false;
-                }
-                break;
-            case RX_OP_APPLY_TAKE_WHILE:
-            {
-                if (can_inline)
-                {
-                    const char *args[] = { "(void *)(intptr_t)value" };
-                    if (!rx_string_builder_append_format(out, "        %s %s = false;\n", function.return_type, result_name)
-                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
-                        || !rx_string_builder_append_format(out, "        if (!%s) { break; }\n", result_name))
-                    {
-                        free_inline_function(&function);
-                        return false;
-                    }
-                }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        if (!%s((void *)(intptr_t)value)) { break; }\n",
-                             fn))
-                {
-                    return false;
-                }
-                break;
-            }
-            case RX_OP_APPLY_SKIP_WHILE:
-            {
-                if (can_inline)
-                {
-                    const char *args[] = { "(void *)(intptr_t)value" };
-                    if (!rx_string_builder_append_format(out, "        %s %s = false;\n", function.return_type, result_name)
-                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
-                        || !rx_string_builder_append_format(
-                               out,
-                               "        if (!%s && %s) { continue; }\n",
-                               pipeline->state_slots[op->state_slot_index].name,
-                               result_name))
-                    {
-                        free_inline_function(&function);
-                        return false;
-                    }
-                }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        if (!%s && %s((void *)(intptr_t)value)) { continue; }\n",
-                             pipeline->state_slots[op->state_slot_index].name,
-                             fn))
-                {
-                    return false;
-                }
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s = true;\n",
-                        pipeline->state_slots[op->state_slot_index].name))
-                {
-                    free_inline_function(&function);
+                    if (can_inline) free_inline_function(&function);
                     return false;
                 }
                 break;
@@ -897,114 +620,79 @@ static bool emit_loop_body(
                     const char *args[] = { "(void *)(intptr_t)value" };
                     if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
                         || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
-                        || !rx_string_builder_append_format(
-                               out,
-                               "        intptr_t key_%d = (intptr_t)%s;\n",
-                               index,
-                               result_name))
+                        || !rx_string_builder_append_format(out, "        intptr_t key_%d = (intptr_t)%s;\n", index, result_name))
                     {
                         free_inline_function(&function);
                         return false;
                     }
                 }
-                else if (!rx_string_builder_append_format(
-                             out,
-                             "        intptr_t key_%d = (intptr_t)%s((void *)(intptr_t)value);\n",
-                             index,
-                             fn))
+                else if (!rx_string_builder_append_format(out, "        intptr_t key_%d = (intptr_t)%s((void *)(intptr_t)value);\n", index, fn))
                 {
                     return false;
                 }
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        if (%s && key_%d == %s) { continue; }\n",
-                        pipeline->state_slots[op->aux_state_slot_index].name,
-                        index,
-                        pipeline->state_slots[op->state_slot_index].name))
+                if (!rx_string_builder_append_format(out, "        if (%s && key_%d == %s) { continue; }\n", pipeline->state_slots[op->aux_state_slot_index].name, index, pipeline->state_slots[op->state_slot_index].name)
+                    || !rx_string_builder_append_format(out, "        %s = key_%d;\n", pipeline->state_slots[op->state_slot_index].name, index)
+                    || !rx_string_builder_append_format(out, "        %s = true;\n", pipeline->state_slots[op->aux_state_slot_index].name))
+                {
+                    if (can_inline) free_inline_function(&function);
+                    return false;
+                }
+                break;
+            }
+            case RX_OP_APPLY_SKIP_WHILE:
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)value" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = false;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
+                        || !rx_string_builder_append_format(out, "        if (!%s && %s) { continue; }\n", pipeline->state_slots[op->state_slot_index].name, result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(out, "        if (!%s && %s((void *)(intptr_t)value)) { continue; }\n", pipeline->state_slots[op->state_slot_index].name, fn))
                 {
                     return false;
                 }
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s = key_%d;\n",
-                        pipeline->state_slots[op->state_slot_index].name,
-                        index))
+                if (!rx_string_builder_append_format(out, "        %s = true;\n", pipeline->state_slots[op->state_slot_index].name))
                 {
-                    return false;
-                }
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s = true;\n",
-                        pipeline->state_slots[op->aux_state_slot_index].name))
-                {
-                    free_inline_function(&function);
+                    if (can_inline) free_inline_function(&function);
                     return false;
                 }
                 break;
             }
             case RX_OP_APPLY_LAST:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s = value;\n",
-                        pipeline->state_slots[op->state_slot_index].name))
+                if (!rx_string_builder_append_format(out, "        %s = value;\n", pipeline->state_slots[op->state_slot_index].name)
+                    || !rx_string_builder_append_format(out, "        %s = true;\n", pipeline->state_slots[op->aux_state_slot_index].name))
                 {
-                    return false;
-                }
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s = true;\n",
-                        pipeline->state_slots[op->aux_state_slot_index].name))
-                {
-                    return false;
-                }
-                break;
-            case RX_OP_APPLY_FIRST:
-                if (!rx_string_builder_append(out, "        return value;\n"))
-                {
-                    free_inline_function(&function);
                     return false;
                 }
                 break;
             default:
-                free_inline_function(&function);
+                if (can_inline) free_inline_function(&function);
                 return false;
         }
 
         if (!rx_string_builder_append_format(out, "        RX_PROFILE_STAGE_END(%d);\n", index))
         {
-            if (can_inline)
-            {
-                free_inline_function(&function);
-            }
+            if (can_inline) free_inline_function(&function);
             return false;
         }
-
-        if (can_inline)
-        {
-            free_inline_function(&function);
-        }
+        if (can_inline) free_inline_function(&function);
     }
 
     return rx_string_builder_append(out, "    }\n");
 }
 
-bool rx_emit_c_segment_function(
-    const RxLoweredPipeline *pipeline,
-    const RxCCodegenOptions *options,
-    RxStringBuilder *out,
-    RxDiagnosticBag *diagnostics)
+bool rx_emit_c_segment_function(const RxLoweredPipeline *pipeline, const RxCCodegenOptions *options, RxStringBuilder *out, RxDiagnosticBag *diagnostics)
 {
-    (void)options;
     (void)diagnostics;
-
-    if (!rx_string_builder_append_format(
-            out,
-            "static intptr_t run_%s(intptr_t N) {\n",
-            pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+    if (!rx_string_builder_append_format(out, "static intptr_t run_%s(intptr_t N) {\n", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
     {
         return false;
     }
-
     for (int index = 0; index < pipeline->state_slot_count; ++index)
     {
         if (!emit_state_slot(out, &pipeline->state_slots[index]))
@@ -1013,68 +701,54 @@ bool rx_emit_c_segment_function(
         }
     }
 
-    if (!emit_loop_body(pipeline, options, out))
+    size_t loop_start = out->length;
+    bool used_graph = false;
+    if (options != NULL && options->enable_graph_optimizations && options->helper_source_text != NULL)
+    {
+        used_graph = rx_try_emit_graph_optimized_loop_body(pipeline, options, out);
+        if (!used_graph)
+        {
+            out->length = loop_start;
+            if (out->data != NULL)
+            {
+                out->data[out->length] = '\0';
+            }
+        }
+    }
+    if (!used_graph && !emit_loop_body(pipeline, options, out))
     {
         return false;
     }
 
     const RxLoopOp *last_op = pipeline->op_count > 0 ? &pipeline->ops[pipeline->op_count - 1] : NULL;
-    if (last_op != NULL && last_op->kind == RX_OP_CALL_REDUCE)
+    if (last_op != NULL && last_op->kind == RX_OP_APPLY_LAST)
     {
-        if (!rx_string_builder_append_format(
-                out,
-                "    return %s;\n",
-                pipeline->state_slots[last_op->state_slot_index].name))
+        if (!rx_string_builder_append_format(out, "    return %s ? %s : 0;\n", pipeline->state_slots[last_op->aux_state_slot_index].name, pipeline->state_slots[last_op->state_slot_index].name))
         {
             return false;
         }
     }
-    else if (last_op != NULL && last_op->kind == RX_OP_APPLY_LAST)
+    else if (!rx_string_builder_append(out, "    return 0;\n"))
     {
-        if (!rx_string_builder_append_format(
-                out,
-                "    return %s ? %s : 0;\n",
-                pipeline->state_slots[last_op->aux_state_slot_index].name,
-                pipeline->state_slots[last_op->state_slot_index].name))
-        {
-            return false;
-        }
+        return false;
     }
-    else
-    {
-        if (!rx_string_builder_append(out, "    return 0;\n"))
-        {
-            return false;
-        }
-    }
-
     return rx_string_builder_append(out, "}\n\n");
 }
 
-bool rx_emit_c_program(
-    const RxLoweredProgram *program,
-    const RxCCodegenOptions *options,
-    RxStringBuilder *out,
-    RxDiagnosticBag *diagnostics)
+bool rx_emit_c_program(const RxLoweredProgram *program, const RxCCodegenOptions *options, RxStringBuilder *out, RxDiagnosticBag *diagnostics)
 {
     (void)diagnostics;
-
     if (program == NULL || program->pipeline_count <= 0)
     {
         return true;
     }
 
     const RxLoweredPipeline *pipeline = &program->pipelines[0];
-
-    if (!rx_string_builder_append(out, "#define _POSIX_C_SOURCE 200809L\n"))
+    if (!rx_string_builder_append(out, "#define _POSIX_C_SOURCE 200809L\n")
+        || !rx_string_builder_append(out, "#include <inttypes.h>\n#include <stdbool.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <time.h>\n\n"))
     {
         return false;
     }
-    if (!rx_string_builder_append(out, "#include <inttypes.h>\n#include <stdbool.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <time.h>\n\n"))
-    {
-        return false;
-    }
-
     if (options != NULL && options->header_path != NULL)
     {
         if (!rx_string_builder_append_format(out, "#include \"%s\"\n\n", options->header_path))
@@ -1086,12 +760,10 @@ bool rx_emit_c_program(
     {
         return false;
     }
-
     if (!emit_profile_decls(pipeline, out))
     {
         return false;
     }
-
     if (!rx_emit_c_segment_function(pipeline, options, out, diagnostics))
     {
         return false;
@@ -1112,10 +784,7 @@ bool rx_emit_c_program(
         {
             return false;
         }
-        if (!rx_string_builder_append_format(
-                out,
-                "        result = run_%s(N);\n",
-                pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        if (!rx_string_builder_append_format(out, "        result = run_%s(N);\n", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
         {
             return false;
         }
@@ -1124,95 +793,6 @@ bool rx_emit_c_program(
                 "        clock_gettime(CLOCK_MONOTONIC, &end);\n"
                 "        total_ns += (int64_t)(end.tv_sec - start.tv_sec) * 1000000000LL + (int64_t)(end.tv_nsec - start.tv_nsec);\n"
                 "    }\n"
-                "#ifdef RX_PLANNER_PROFILE\n"
-                "    for (size_t i = 0; i < sizeof(rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                ") / sizeof(rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                "[0]); ++i) {\n"
-                "        fprintf(stderr, \"PROFILE %s hits=%llu total_ns=%llu avg_ns=%.2f\\n\",\n"
-                "            rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                "[i].name,\n"
-                "            (unsigned long long)rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                "[i].hits,\n"
-                "            (unsigned long long)rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                "[i].total_ns,\n"
-                "            rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                "[i].hits == 0 ? 0.0 : (double)rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                "[i].total_ns / rx_profile_slots_"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
-        {
-            return false;
-        }
-        if (!rx_string_builder_append(
-                out,
-                "[i].hits);\n"
-                "    }\n"
-                "#endif\n"
                 "    printf(\"{\\\"result\\\": %" PRIdPTR ", \\\"average_ms\\\": %.5f, \\\"runs\\\": %d, \\\"n\\\": %" PRIdPTR "}\\n\", result, (double)total_ns / RUNS / 1e6, RUNS, N);\n"
                 "    return 0;\n"
                 "}\n"))

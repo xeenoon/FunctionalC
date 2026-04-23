@@ -141,6 +141,7 @@ def planner_codegen_binary(benchmark_workspace: Path) -> Path:
             'core/planner/function_registry.c',
             'core/planner/simplify.c',
             'core/planner/lower.c',
+            'core/planner/graph_opt.c',
             'core/planner/c_codegen.c',
             'core/planner/transpiler.c',
             'core/planner/compiled_segment.c',

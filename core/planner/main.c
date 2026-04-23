@@ -278,6 +278,7 @@ int main(int argc, char **argv)
     const char *output_path = NULL;
     const char *header_path = NULL;
     const char *helpers_source_path = NULL;
+    bool enable_graph_optimizations = false;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -296,6 +297,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[index], "--helpers-source") == 0 && index + 1 < argc)
         {
             helpers_source_path = argv[++index];
+        }
+        else if (strcmp(argv[index], "--graph-opt") == 0)
+        {
+            enable_graph_optimizations = true;
         }
     }
 
@@ -328,6 +333,7 @@ int main(int argc, char **argv)
     RxCCodegenOptions options;
     memset(&options, 0, sizeof(options));
     options.emit_main = true;
+    options.enable_graph_optimizations = enable_graph_optimizations;
     options.header_path = header_path;
 
     if (helpers_source_path != NULL)
