@@ -614,6 +614,45 @@ static bool rx_emit_expr(RxStringBuilder *out, const RxExpr *expr)
     }
 }
 
+static bool rx_expr_is_named_var(const RxExpr *expr, const char *name)
+{
+    return expr != NULL
+        && expr->kind == RX_EXPR_VAR
+        && expr->name != NULL
+        && strcmp(expr->name, name) == 0;
+}
+
+static bool rx_materialize_current_expr(RxStringBuilder *out, RxExpr **current, bool *has_value_decl)
+{
+    if (current == NULL || *current == NULL || rx_expr_is_named_var(*current, "value"))
+    {
+        return true;
+    }
+
+    bool ok = false;
+    if (*has_value_decl)
+    {
+        ok = rx_string_builder_append(out, "        value = ")
+            && rx_emit_expr(out, *current)
+            && rx_string_builder_append(out, ";\n");
+    }
+    else
+    {
+        ok = rx_string_builder_append(out, "        intptr_t value = ")
+            && rx_emit_expr(out, *current)
+            && rx_string_builder_append(out, ";\n");
+        *has_value_decl = ok;
+    }
+    if (!ok)
+    {
+        return false;
+    }
+
+    rx_free_expr(*current);
+    *current = rx_new_var("value");
+    return *current != NULL;
+}
+
 static char *strip_return_wrapper(const char *expr)
 {
     const char *prefix = "(void *)(intptr_t)";
@@ -765,6 +804,7 @@ bool rx_try_emit_graph_optimized_loop_body(
     RxStringBuilder *out)
 {
     RxExpr *current = pipeline->source_kind == RX_LOOP_SOURCE_RANGE ? rx_new_var("src") : NULL;
+    bool has_value_decl = false;
     bool ok = true;
     if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n"))
     {
@@ -774,14 +814,6 @@ bool rx_try_emit_graph_optimized_loop_body(
     {
         ok = rx_string_builder_append(out, "        intptr_t left = src;\n")
             && rx_string_builder_append(out, "        intptr_t right = src;\n");
-    }
-    if (ok && current != NULL)
-    {
-        ok = rx_string_builder_append(out, "        intptr_t value = src;\n");
-    }
-    else if (ok)
-    {
-        ok = rx_string_builder_append(out, "        intptr_t value = 0;\n");
     }
     if (!ok)
     {
@@ -808,9 +840,7 @@ bool rx_try_emit_graph_optimized_loop_body(
                 if (!ok) { break; }
                 rx_free_expr(current);
                 current = expr;
-                ok = rx_string_builder_append(out, "        value = ")
-                    && rx_emit_expr(out, current)
-                    && rx_string_builder_append(out, ";\n");
+                has_value_decl = false;
                 break;
             }
             case RX_OP_CALL_MAP:
@@ -821,9 +851,7 @@ bool rx_try_emit_graph_optimized_loop_body(
                 if (!ok) { break; }
                 rx_free_expr(current);
                 current = expr;
-                ok = rx_string_builder_append(out, "        value = ")
-                    && rx_emit_expr(out, current)
-                    && rx_string_builder_append(out, ";\n");
+                has_value_decl = false;
                 break;
             }
             case RX_OP_CALL_SCAN:
@@ -835,18 +863,18 @@ bool rx_try_emit_graph_optimized_loop_body(
                 if (!ok) { break; }
                 ok = rx_string_builder_append_format(out, "        %s = ", pipeline->state_slots[op->state_slot_index].name)
                     && rx_emit_expr(out, expr)
-                    && rx_string_builder_append(out, ";\n")
-                    && rx_string_builder_append(out, "        value = ")
-                    && rx_string_builder_append(out, pipeline->state_slots[op->state_slot_index].name)
                     && rx_string_builder_append(out, ";\n");
                 rx_free_expr(current);
                 current = rx_new_var(pipeline->state_slots[op->state_slot_index].name);
+                has_value_decl = false;
                 rx_free_expr(expr);
                 expr = NULL;
                 break;
             }
             case RX_OP_APPLY_DISTINCT_UNTIL_CHANGED:
             {
+                ok = rx_materialize_current_expr(out, &current, &has_value_decl);
+                if (!ok) { break; }
                 const char *params[] = { "raw" };
                 RxExpr *args[] = { current };
                 ok = try_parse_function_expression(options->helper_source_text, fn, params, args, 1, &expr);
@@ -862,6 +890,8 @@ bool rx_try_emit_graph_optimized_loop_body(
             }
             case RX_OP_APPLY_SKIP_WHILE:
             {
+                ok = rx_materialize_current_expr(out, &current, &has_value_decl);
+                if (!ok) { break; }
                 const char *params[] = { "raw" };
                 RxExpr *args[] = { current };
                 ok = try_parse_function_expression(options->helper_source_text, fn, params, args, 1, &expr);
@@ -874,6 +904,8 @@ bool rx_try_emit_graph_optimized_loop_body(
                 break;
             }
             case RX_OP_APPLY_LAST:
+                ok = rx_materialize_current_expr(out, &current, &has_value_decl);
+                if (!ok) { break; }
                 ok = rx_string_builder_append_format(out, "        %s = ", pipeline->state_slots[op->state_slot_index].name)
                     && rx_emit_expr(out, current)
                     && rx_string_builder_append(out, ";\n")
