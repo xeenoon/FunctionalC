@@ -13,6 +13,14 @@ typedef enum
 
 typedef enum
 {
+    RX_SEGMENT_RULE_FLEXIBLE,
+    RX_SEGMENT_RULE_MUST_START_SEGMENT,
+    RX_SEGMENT_RULE_MUST_END_SEGMENT,
+    RX_SEGMENT_RULE_MUST_STAY_WHOLE
+} RxSegmentBoundaryRule;
+
+typedef enum
+{
     RX_ARG_NONE,
     RX_ARG_INT,
     RX_ARG_LONG,
@@ -40,6 +48,10 @@ typedef struct
     RxArgumentType argument_types[RX_MAX_CALL_ARGUMENTS];
     bool timer_based;
     bool transpile_candidate;
+    bool preserves_runtime_layout;
+    bool accepts_runtime_layout_input;
+    bool returns_runtime_layout_output;
+    RxSegmentBoundaryRule segment_rule;
 } RxFunctionSignature;
 
 typedef struct

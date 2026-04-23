@@ -45,6 +45,10 @@ typedef struct
     RxBinding primary_argument;
     RxBinding secondary_argument;
     int chain_length;
+    bool can_start_segment;
+    bool can_end_segment;
+    bool must_remain_whole;
+    bool preserves_runtime_layout;
 } RxPlannedStage;
 
 typedef struct

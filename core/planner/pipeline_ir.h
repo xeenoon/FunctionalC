@@ -51,12 +51,18 @@ typedef struct
 {
     const RxFunctionSignature *signature;
     RxBinding arguments[RX_MAX_CALL_ARGUMENTS];
+    bool can_start_segment;
+    bool can_end_segment;
 } RxSourceCall;
 
 typedef struct
 {
     const RxFunctionSignature *signature;
     RxBinding arguments[RX_MAX_CALL_ARGUMENTS];
+    bool can_start_segment;
+    bool can_end_segment;
+    bool must_remain_whole;
+    bool preserves_runtime_layout;
 } RxStageCall;
 
 typedef struct
