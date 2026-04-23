@@ -1,6 +1,7 @@
 #include "lowering.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "operator_registry.h"
@@ -70,6 +71,22 @@ bool lower_program(const ProgramAst *ast, ProgramIr *ir)
 {
     memset(ir, 0, sizeof(*ir));
 
+    if (ast->function_count > 0) {
+        ir->functions = calloc((size_t)ast->function_count, sizeof(*ir->functions));
+        if (ir->functions == NULL) {
+            fprintf(stderr, "lowering error: out of memory\n");
+            return false;
+        }
+    }
+
+    if (ast->chain_count > 0) {
+        ir->chains = calloc((size_t)ast->chain_count, sizeof(*ir->chains));
+        if (ir->chains == NULL) {
+            fprintf(stderr, "lowering error: out of memory\n");
+            return false;
+        }
+    }
+
     for (int i = 0; i < ast->function_count; ++i)
     {
         ir->functions[i].def = &ast->functions[i];
@@ -77,6 +94,7 @@ bool lower_program(const ProgramAst *ast, ProgramIr *ir)
         ir->functions[i].used = false;
     }
     ir->function_count = ast->function_count;
+    ir->function_capacity = ast->function_count;
 
     for (int ci = 0; ci < ast->chain_count; ++ci)
     {
@@ -90,6 +108,14 @@ bool lower_program(const ProgramAst *ast, ProgramIr *ir)
 
         out->source = *chain->source;
         out->op_count = chain->op_count;
+        out->op_capacity = chain->op_count;
+        if (chain->op_count > 0) {
+            out->ops = calloc((size_t)chain->op_count, sizeof(*out->ops));
+            if (out->ops == NULL) {
+                fprintf(stderr, "lowering error: out of memory\n");
+                return false;
+            }
+        }
         strncpy(out->subscriber_target, chain->subscriber_target, sizeof(out->subscriber_target) - 1);
 
         for (int oi = 0; oi < chain->op_count; ++oi)
@@ -113,5 +139,6 @@ bool lower_program(const ProgramAst *ast, ProgramIr *ir)
     }
 
     ir->chain_count = ast->chain_count;
+    ir->chain_capacity = ast->chain_count;
     return true;
 }

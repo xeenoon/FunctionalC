@@ -19,7 +19,7 @@ typedef struct
 typedef struct
 {
     ProgramIr ir;
-    ChainPlan chains[32];
+    ChainPlan *chains;
     int chain_count;
 } ExecutionPlan;
 

@@ -1,5 +1,6 @@
 #include "planner.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "operator_registry.h"
@@ -14,6 +15,12 @@ bool build_execution_plan(const ProgramIr *ir, ExecutionPlan *plan)
     memset(plan, 0, sizeof(*plan));
     plan->ir = *ir;
     plan->chain_count = ir->chain_count;
+    if (ir->chain_count > 0) {
+        plan->chains = calloc((size_t)ir->chain_count, sizeof(*plan->chains));
+        if (plan->chains == NULL) {
+            return false;
+        }
+    }
 
     for (int ci = 0; ci < ir->chain_count; ++ci)
     {

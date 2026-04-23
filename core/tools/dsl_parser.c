@@ -11,6 +11,39 @@ typedef struct {
     Lexer lexer;
 } Parser;
 
+static bool grow_array(void **items, int *capacity, size_t item_size,
+                       int min_capacity) {
+    int next_capacity = *capacity > 0 ? *capacity : 8;
+    while (next_capacity < min_capacity) {
+        next_capacity *= 2;
+    }
+
+    void *grown = realloc(*items, item_size * (size_t)next_capacity);
+    if (grown == NULL) {
+        fprintf(stderr, "parse error: out of memory\n");
+        return false;
+    }
+
+    *items = grown;
+    *capacity = next_capacity;
+    return true;
+}
+
+static bool ensure_program_function_capacity(ProgramAst *program) {
+    return grow_array((void **)&program->functions, &program->function_capacity,
+                      sizeof(*program->functions), program->function_count + 1);
+}
+
+static bool ensure_program_chain_capacity(ProgramAst *program) {
+    return grow_array((void **)&program->chains, &program->chain_capacity,
+                      sizeof(*program->chains), program->chain_count + 1);
+}
+
+static bool ensure_chain_operator_capacity(ChainAst *chain) {
+    return grow_array((void **)&chain->ops, &chain->op_capacity,
+                      sizeof(*chain->ops), chain->op_count + 1);
+}
+
 static Expr *new_expr(ExprKind kind, const char *text) {
     Expr *expr = (Expr *)calloc(1, sizeof(Expr));
     expr->kind = kind;
@@ -350,7 +383,7 @@ static bool parse_chain(Parser *parser, ChainAst *chain) {
         }
         if (!accept(parser, TOK_RPAREN)) {
             while (true) {
-                if (chain->op_count >= 32 ||
+                if (!ensure_chain_operator_capacity(chain) ||
                     !parse_operator(parser, &chain->ops[chain->op_count])) {
                     return false;
                 }
@@ -386,14 +419,14 @@ bool parse_program_text(const char *source, ProgramAst *program) {
     while (parser.lexer.current.kind != TOK_EOF) {
         if (parser.lexer.current.kind == TOK_IDENT &&
             strcmp(parser.lexer.current.text, "fn") == 0) {
-            if (program->function_count >= 64 ||
+            if (!ensure_program_function_capacity(program) ||
                 !parse_fn_def(&parser,
                               &program->functions[program->function_count])) {
                 return false;
             }
             program->function_count++;
         } else {
-            if (program->chain_count >= 32 ||
+            if (!ensure_program_chain_capacity(program) ||
                 !parse_chain(&parser, &program->chains[program->chain_count])) {
                 return false;
             }

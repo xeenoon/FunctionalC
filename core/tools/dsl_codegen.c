@@ -563,7 +563,7 @@ bool emit_program_c(const ExecutionPlan *plan, const CodegenOptions *options) {
     fprintf(out, "        total_ns += ns;\n    }\n");
     fprintf(out, "    printf(\"C   result : %%lld\\n\", (long long)%s);\n",
             plan->ir.chains[plan->chain_count - 1].subscriber_target);
-    fprintf(out, "    printf(\"C   average: %%.2f ms  (%%d runs)\\n\", "
+    fprintf(out, "    printf(\"C   average: %%.5f ms  (%%d runs)\\n\", "
                  "(double)total_ns / RUNS / 1e6, RUNS);\n");
     fprintf(out, "#if ENABLE_PROFILER\n    profiler_print_report();\n#endif\n");
     fprintf(out, "    return 0;\n}\n");
@@ -575,7 +575,7 @@ bool emit_program_c(const ExecutionPlan *plan, const CodegenOptions *options) {
 int compile_generated_program(const CodegenOptions *options) {
     char command[1024];
     snprintf(command, sizeof(command),
-             "gcc -DENABLE_PROFILER=0 -w -g -O0 -I./core/src %s "
+             "gcc -DENABLE_PROFILER=0 -w -O3 -I./core/src %s "
              "core/src/observable.c core/src/list.c core/src/task.c "
              "core/src/stopwatch.c core/src/profiler.c -o %s",
              options->output_file, options->binary_file);

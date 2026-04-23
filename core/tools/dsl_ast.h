@@ -75,16 +75,19 @@ typedef struct {
 
 typedef struct {
     SourceAst *source;
-    OperatorAst ops[32];
+    OperatorAst *ops;
     int op_count;
+    int op_capacity;
     char subscriber_target[64];
 } ChainAst;
 
 typedef struct {
-    FnDef functions[64];
+    FnDef *functions;
     int function_count;
-    ChainAst chains[32];
+    int function_capacity;
+    ChainAst *chains;
     int chain_count;
+    int chain_capacity;
 } ProgramAst;
 
 #endif
