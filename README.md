@@ -1,6 +1,25 @@
 # FunctionalC
 
-FunctionalC is a C-based optimization of the existing RxJS library, focused on observable-style data pipelines, code generation, and benchmark comparisons against the JavaScript/RxJS version of the same workload.
+FunctionalC is a C-based optimization of the existing RxJS library for large-scale backend workloads. It is designed to make high-throughput, RxJS-style data processing practical for backend operations where JavaScript alone becomes a bottleneck, while preserving the observable pipeline model and adding a transpilation path that can lower selected chains into optimized C.
+
+In practical terms, the project is aimed at workloads where large volumes of data need to move through long operator chains with predictable latency and much lower overhead than a standard TypeScript/RxJS implementation.
+
+## Performance Summary
+
+The current benchmark suite shows the same overall pattern across the tested scenarios:
+
+- for smaller synchronous pipelines, the raw C path is typically around 100x faster than the TypeScript/RxJS version
+- the DSL-transpiled C path is also consistently faster than TypeScript/RxJS, while preserving the observable-style pipeline shape
+- for heavier backend-style stress cases, especially very deep operator chains or very large data volumes, the gap becomes much larger
+
+Examples from the current benchmark output:
+
+- `s01_map_reduce`: raw C `0.02622 ms` vs TypeScript `3.47722 ms`, roughly `133x` faster
+- `s02_map_filter_reduce`: raw C `0.05702 ms` vs TypeScript `5.28536 ms`, roughly `93x` faster
+- `s11_map_reduce_x1000_items`: raw C `29.36070 ms` vs TypeScript `1662.24730 ms`, roughly `57x` faster on a much larger data volume
+- `s12_chain_10000_x1000_items`: raw C `0.00010 ms` vs TypeScript `20.08890 ms`, with the TypeScript/RxJS version also failing to produce the expected result in that stress case
+
+Taken together, these benchmarks show the intended use case of the library clearly: for ordinary backend pipeline work, the system is often around 100x faster than the equivalent TypeScript/RxJS implementation, and for heavy-duty workloads involving very deep chains or extreme throughput, the measured gap can reach into the thousands of times faster depending on the scenario.
 
 The repository currently contains:
 

@@ -237,6 +237,12 @@ SCENARIOS = (
             Operation('reduce', 'sum', 0),
         ),
     ),
+    BenchmarkScenario(
+        's12_chain_10000_x1000_items',
+        n=10_000,
+        runs=1,
+        ops=_long_map_chain(10_000),
+    ),
 )
 
 

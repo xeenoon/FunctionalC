@@ -19,7 +19,7 @@ def test_benchmark_matrix(
     assert raw_c.result == expected
     assert dsl_c.result == expected
 
-    if scenario.name != 's10_chain_10000':
+    if scenario.name not in {'s10_chain_10000', 's12_chain_10000_x1000_items'}:
         assert typescript.result == expected
 
     print(f'\n{scenario.name}', flush=True)
