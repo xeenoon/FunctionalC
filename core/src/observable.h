@@ -14,7 +14,8 @@ typedef enum {
     QUERY_KIND_SCAN,
     QUERY_KIND_DISTINCT_UNTIL_CHANGED,
     QUERY_KIND_SKIP_WHILE,
-    QUERY_KIND_LAST
+    QUERY_KIND_LAST,
+    QUERY_KIND_MAP_CHAIN
 } QueryKind;
 
 typedef void (*Subscriber)(void *arg);
@@ -35,6 +36,10 @@ typedef struct {
 typedef struct {
     ModifierFunction pred;
 } MapCtx;
+typedef struct {
+    ModifierFunction *funcs;
+    int count;
+} CompiledMapChain;
 typedef struct {
     void *to;
 } MapToCtx;
@@ -91,9 +96,24 @@ typedef struct {
 typedef List *(*PipeFunc)(List *data, void *ctx);
 typedef Observable *(*FactoryFn)();
 
+typedef struct {
+    Query *query;
+    QueryKind kind;
+    void *ctx;
+} CompiledStage;
+
+typedef struct {
+    CompiledStage *stages;
+    int count;
+    bool streamable;
+    bool mergemap_then_streamable;
+    int stream_start_index;
+} CompiledPipeline;
+
 typedef struct Observable {
     List *data;
     List *cache;
+    CompiledPipeline *compiled_pipeline;
     bool complete;
     bool ready;
     Subscriber subscriber;

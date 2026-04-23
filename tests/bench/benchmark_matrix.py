@@ -35,7 +35,7 @@ class BenchmarkScenario:
     runs: int
     ops: tuple[Operation, ...]
     source: SourceSpec = SourceSpec()
-    backends: tuple[str, ...] = ('raw_c', 'dsl_c', 'typescript')
+    backends: tuple[str, ...] = ('raw_c', 'library_c', 'dsl_c', 'typescript')
 
     def describe(self) -> str:
         parts: list[str] = []
@@ -328,7 +328,7 @@ SCENARIOS = (
         n=10_000,
         runs=3,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -343,7 +343,7 @@ SCENARIOS = (
         n=500_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -358,7 +358,7 @@ SCENARIOS = (
         n=1_000,
         runs=3,
         source=SourceSpec('merge_map_range', inner_n=1_000),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -373,7 +373,7 @@ SCENARIOS = (
         n=10_000,
         runs=1,
         source=SourceSpec('merge_map_range', inner_n=10_000),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -388,7 +388,7 @@ SCENARIOS = (
         n=100_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_pair_map_chain(100),
     ),
     BenchmarkScenario(
@@ -396,7 +396,7 @@ SCENARIOS = (
         n=100_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_stateful_chain(50),
     ),
     BenchmarkScenario(
@@ -404,7 +404,7 @@ SCENARIOS = (
         n=500_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_stateful_chain(50),
     ),
     BenchmarkScenario(
@@ -412,7 +412,7 @@ SCENARIOS = (
         n=1_000_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_stateful_chain(50),
     ),
     BenchmarkScenario(
@@ -420,7 +420,7 @@ SCENARIOS = (
         n=1_000,
         runs=1,
         source=SourceSpec('merge_map_range', inner_n=1_000),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_mergemap_stateful_chain(150),
     ),
     BenchmarkScenario(
@@ -428,7 +428,7 @@ SCENARIOS = (
         n=3_000,
         runs=1,
         source=SourceSpec('merge_map_range', inner_n=3_000),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_mergemap_stateful_chain(150),
     ),
     BenchmarkScenario(
@@ -436,7 +436,7 @@ SCENARIOS = (
         n=1_000,
         runs=1,
         source=SourceSpec('zip_merge_map_range', inner_n=100),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=(
             Operation('tripleMap', 'tripleSum'),
             Operation('scan', 'sum'),
@@ -451,7 +451,7 @@ SCENARIOS = (
         n=3_000,
         runs=1,
         source=SourceSpec('zip_merge_map_range', inner_n=1_000),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_mergemap_stateful_chain(150),
     ),
     BenchmarkScenario(
@@ -459,7 +459,7 @@ SCENARIOS = (
         n=1_000_000,
         runs=1,
         source=SourceSpec('zip_merge_map_range', inner_n=1),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_mergemap_stateful_chain(1000),
     ),
     BenchmarkScenario(
@@ -467,7 +467,7 @@ SCENARIOS = (
         n=3_000_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_stateful_chain(50),
     ),
     BenchmarkScenario(
@@ -475,7 +475,7 @@ SCENARIOS = (
         n=1_000_000,
         runs=1,
         source=SourceSpec('zip_merge_map_range', inner_n=1),
-        backends=('raw_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'typescript'),
         ops=_zip_mergemap_stateful_chain(5_000),
     ),
 )
@@ -667,6 +667,44 @@ def _c_function(spec: FunctionSpec) -> str:
     return f'static intptr_t {spec.name}(intptr_t x) {{ return {spec.c_expr}; }}'
 
 
+def _library_c_function(spec: FunctionSpec) -> str:
+    if spec.name == 'pairSum':
+        return (
+            'static void *pairSum(void *x) {\n'
+            '    intptr_t left = (intptr_t)pair_left(x);\n'
+            '    intptr_t right = (intptr_t)pair_right(x);\n'
+            '    return (void *)(intptr_t)(left + right);\n'
+            '}'
+        )
+    if spec.name == 'tripleSum':
+        return (
+            'static void *tripleSum(void *x) {\n'
+            '    void *pair = pair_left(x);\n'
+            '    intptr_t left = (intptr_t)pair_left(pair);\n'
+            '    intptr_t right = (intptr_t)pair_right(pair);\n'
+            '    intptr_t extra = (intptr_t)pair_right(x);\n'
+            '    return (void *)(intptr_t)(left + right + extra);\n'
+            '}'
+        )
+    if spec.kind == 'predicate':
+        return (
+            f'static bool {spec.name}(void *raw) {{ '
+            f'intptr_t x = (intptr_t)raw; return {spec.c_expr}; }}'
+        )
+    if spec.kind == 'accumulator':
+        return (
+            f'static void *{spec.name}(void *raw_accum, void *raw_next) {{ '
+            f'intptr_t accum = (intptr_t)raw_accum; '
+            f'intptr_t next = (intptr_t)raw_next; '
+            f'return (void *)(intptr_t)({spec.c_expr}); }}'
+        )
+    return (
+        f'static void *{spec.name}(void *raw) {{ '
+        f'intptr_t x = (intptr_t)raw; '
+        f'return (void *)(intptr_t)({spec.c_expr}); }}'
+    )
+
+
 def generate_raw_c_source(scenario: BenchmarkScenario) -> str:
     functions = '\n'.join(_c_function(spec) for spec in _required_functions(scenario))
     uses_reduce = any(op.kind == 'reduce' for op in scenario.ops)
@@ -844,6 +882,127 @@ int main(int argc, char **argv) {{
 """
 
 
+def generate_library_c_source(scenario: BenchmarkScenario) -> str:
+    functions = '\n'.join(
+        _library_c_function(spec) for spec in _required_functions(scenario)
+    )
+
+    source_lines: list[str]
+    if scenario.source.kind == 'range':
+        source_lines = ['    Observable *observable = range(1, N);']
+    elif scenario.source.kind == 'zip_range':
+        source_lines = [
+            '    Observable *observable = zip(2, range(1, N), range(1, N));'
+        ]
+    elif scenario.source.kind == 'merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('merge_map_range scenarios require inner_n')
+        source_lines = [
+            '    Observable *observable = range(1, N);',
+            f'    Observable *merge_source = range(1, {inner_n});',
+            '    append_query(&observable, mergeMap(merge_source));',
+        ]
+    elif scenario.source.kind == 'zip_merge_map_range':
+        inner_n = scenario.source.inner_n
+        if inner_n is None:
+            raise ValueError('zip_merge_map_range scenarios require inner_n')
+        source_lines = [
+            '    Observable *observable = zip(2, range(1, N), range(1, N));',
+            f'    Observable *merge_source = range(1, {inner_n});',
+            '    append_query(&observable, mergeMap(merge_source));',
+        ]
+    else:
+        raise ValueError(f'Unsupported library C source: {scenario.source.kind}')
+
+    op_lines: list[str] = []
+    for op in scenario.ops:
+        if op.kind == 'map':
+            op_lines.append(f'    append_query(&observable, map({op.arg}));')
+        elif op.kind == 'pairMap':
+            op_lines.append(f'    append_query(&observable, map({op.arg}));')
+        elif op.kind == 'tripleMap':
+            op_lines.append(f'    append_query(&observable, map({op.arg}));')
+        elif op.kind == 'filter':
+            op_lines.append(f'    append_query(&observable, filter({op.arg}));')
+        elif op.kind == 'reduce':
+            op_lines.append(f'    append_query(&observable, reduce({op.arg}));')
+        elif op.kind == 'scan':
+            op_lines.append(f'    append_query(&observable, scan({op.arg}));')
+        elif op.kind == 'take':
+            op_lines.append(f'    append_query(&observable, take({op.arg}));')
+        elif op.kind == 'skip':
+            op_lines.append(f'    append_query(&observable, skip({op.arg}));')
+        elif op.kind == 'takeWhile':
+            op_lines.append(f'    append_query(&observable, takeWhile({op.arg}));')
+        elif op.kind == 'skipWhile':
+            op_lines.append(f'    append_query(&observable, skipWhile({op.arg}));')
+        elif op.kind == 'distinctUntilChanged':
+            op_lines.append(
+                f'    append_query(&observable, distinctUntilChanged({op.arg}));'
+            )
+        elif op.kind == 'last':
+            op_lines.append('    append_query(&observable, last());')
+        else:
+            raise ValueError(f'Unsupported library C op: {op.kind}')
+
+    return f"""#define _POSIX_C_SOURCE 200809L
+#include "observable.h"
+#include <inttypes.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+{functions}
+
+static intptr_t result_value = 0;
+
+static void assign_result(void *value) {{
+    result_value = (intptr_t)value;
+}}
+
+static void append_query(Observable **root, Query *query) {{
+    Observable *current = *root;
+    while (current->pipe != NULL) {{
+        current = current->pipe;
+    }}
+    Observable *next = create_observable();
+    current->emit_handler = query;
+    current->pipe = next;
+}}
+
+static intptr_t run_once(int N) {{
+{chr(10).join(source_lines)}
+{chr(10).join(op_lines)}
+    result_value = 0;
+    subscribe(observable, assign_result);
+    return result_value;
+}}
+
+int main(int argc, char **argv) {{
+    int N = argc > 1 ? atoi(argv[1]) : {scenario.n};
+    int RUNS = argc > 2 ? atoi(argv[2]) : {scenario.runs};
+    intptr_t result = 0;
+    int64_t total_ns = 0;
+
+    for (int run = 0; run < RUNS; ++run) {{
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        result = run_once(N);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        total_ns += (int64_t)(end.tv_sec - start.tv_sec) * 1000000000LL +
+                    (int64_t)(end.tv_nsec - start.tv_nsec);
+    }}
+
+    printf("{{\\"result\\": %" PRIdPTR ", \\"average_ms\\": %.5f, \\"runs\\": %d, \\"n\\": %d}}\\n",
+           result, (double)total_ns / RUNS / 1e6, RUNS, N);
+    return 0;
+}}
+"""
+
+
 def _ts_function(spec: FunctionSpec) -> str:
     if spec.kind == 'predicate':
         return f'const {spec.name} = (x: number): boolean => {spec.ts_expr};'
@@ -988,10 +1147,12 @@ def write_scenario_sources(base_dir: Path, scenario: BenchmarkScenario) -> dict[
     scenario_dir.mkdir(parents=True, exist_ok=True)
 
     raw_c_path = scenario_dir / f'{scenario.name}_raw.c'
+    library_c_path = scenario_dir / f'{scenario.name}_library.c'
     dsl_path = scenario_dir / f'{scenario.name}.dsl'
     ts_path = scenario_dir / f'{scenario.name}.ts'
 
     raw_c_path.write_text(generate_raw_c_source(scenario), encoding='utf-8')
+    library_c_path.write_text(generate_library_c_source(scenario), encoding='utf-8')
     if 'dsl_c' in scenario.backends:
         dsl_path.write_text(generate_dsl_source(scenario), encoding='utf-8')
     ts_path.write_text(generate_ts_source(scenario), encoding='utf-8')
@@ -999,9 +1160,11 @@ def write_scenario_sources(base_dir: Path, scenario: BenchmarkScenario) -> dict[
     return {
         'dir': scenario_dir,
         'raw_c': raw_c_path,
+        'library_c': library_c_path,
         'dsl': dsl_path,
         'ts': ts_path,
         'raw_binary': scenario_dir / f'{scenario.name}_raw.exe',
+        'library_binary': scenario_dir / f'{scenario.name}_library.exe',
         'dsl_c': scenario_dir / f'{scenario.name}_dsl.c',
         'dsl_binary': scenario_dir / f'{scenario.name}_dsl.exe',
     }

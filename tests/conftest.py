@@ -14,6 +14,8 @@ from models import BenchmarkResult
 ROOT_DIR = Path(__file__).parent.parent
 BENCH_DIR = ROOT_DIR / 'benchmarks'
 OUT_DIR = ROOT_DIR / 'out' / 'benchmarks'
+ALL_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'dsl_c', 'typescript')
+C_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'dsl_c')
 
 
 def resolve_command(command: str) -> str:
@@ -45,8 +47,43 @@ def pytest_report_teststatus(report, config):
     return None
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        '--benchmark-backends',
+        action='store',
+        default=','.join(ALL_BENCHMARK_BACKENDS),
+        help=(
+            'Comma-separated benchmark backends to run. '
+            f'Available: {", ".join(ALL_BENCHMARK_BACKENDS)}'
+        ),
+    )
+    parser.addoption(
+        '--c-only',
+        action='store_true',
+        help='Run only C backends (raw_c, library_c, dsl_c) and skip TypeScript.',
+    )
+
+
+@pytest.fixture(scope='session')
+def selected_backends(pytestconfig) -> set[str]:
+    if pytestconfig.getoption('--c-only'):
+        return set(C_BENCHMARK_BACKENDS)
+
+    raw_value = str(pytestconfig.getoption('--benchmark-backends'))
+    selected = {value.strip() for value in raw_value.split(',') if value.strip()}
+    unknown = selected - set(ALL_BENCHMARK_BACKENDS)
+    if unknown:
+        raise pytest.UsageError(
+            f'Unknown benchmark backends: {", ".join(sorted(unknown))}'
+        )
+    return selected
+
+
 @pytest.fixture(scope='session', autouse=True)
-def install_npm():
+def install_npm(selected_backends: set[str]):
+    if 'typescript' not in selected_backends:
+        return
+
     if (BENCH_DIR / 'node_modules' / 'rxjs').exists():
         return
 
@@ -124,6 +161,46 @@ def run_raw_c(scenario_artifacts):
                 capture_output=True,
             )
             cache[scenario.name] = artifacts['raw_binary']
+
+        stdout = subprocess.run(
+            [str(cache[scenario.name]), str(scenario.n), str(scenario.runs)],
+            cwd=ROOT_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return BenchmarkResult.parse_json(stdout)
+
+    return _run
+
+
+@pytest.fixture(scope='session')
+def run_library_c(scenario_artifacts):
+    cache: dict[str, Path] = {}
+
+    def _run(scenario: BenchmarkScenario) -> BenchmarkResult:
+        artifacts = scenario_artifacts(scenario)
+        if scenario.name not in cache:
+            subprocess.run(
+                [
+                    resolve_command('gcc'),
+                    '-O3',
+                    '-I./core/src',
+                    str(artifacts['library_c']),
+                    'src/observable.c',
+                    'core/src/list.c',
+                    'core/src/task.c',
+                    'core/src/stopwatch.c',
+                    'core/src/profiler.c',
+                    '-o',
+                    str(artifacts['library_binary']),
+                    '-lpthread',
+                ],
+                cwd=ROOT_DIR,
+                check=True,
+                capture_output=True,
+            )
+            cache[scenario.name] = artifacts['library_binary']
 
         stdout = subprocess.run(
             [str(cache[scenario.name]), str(scenario.n), str(scenario.runs)],

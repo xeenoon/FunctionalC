@@ -4,6 +4,14 @@
 #include <string.h>
 #include <stdbool.h>
 
+enum {
+    LIST_POOL_MAX = 512,
+    LIST_POOL_CAPACITY_LIMIT = 8
+};
+
+static List *g_list_pool[LIST_POOL_MAX];
+static int g_list_pool_count = 0;
+
 static int normalized_capacity(int capacity) {
     int result = 2;
     while (result < capacity) {
@@ -14,9 +22,26 @@ static int normalized_capacity(int capacity) {
 
 List *init_list_with_capacity(int capacity) {
     uint64_t start = PROFILE_NOW_NS();
-    List *result = malloc(sizeof(List));
-    result->allocatedsize = normalized_capacity(capacity);
-    result->data = malloc(result->allocatedsize * sizeof(void *));
+    int normalized = normalized_capacity(capacity);
+    List *result = NULL;
+
+    if (normalized <= LIST_POOL_CAPACITY_LIMIT) {
+        for (int i = g_list_pool_count - 1; i >= 0; --i) {
+            if (g_list_pool[i]->allocatedsize >= normalized) {
+                result = g_list_pool[i];
+                g_list_pool[i] = g_list_pool[g_list_pool_count - 1];
+                --g_list_pool_count;
+                break;
+            }
+        }
+    }
+
+    if (result == NULL) {
+        result = malloc(sizeof(List));
+        result->allocatedsize = normalized;
+        result->data = malloc(result->allocatedsize * sizeof(void *));
+    }
+
     result->payload_block = NULL;
     result->front = 0;
     result->rear = 0;
@@ -141,9 +166,18 @@ void resize(List *list) {
 
 void freelist(List *list) {
     uint64_t start = PROFILE_NOW_NS();
-    free(list->payload_block);
-    free(list->data);
-    free(list);
+    if (list->payload_block == NULL &&
+        list->allocatedsize <= LIST_POOL_CAPACITY_LIMIT &&
+        g_list_pool_count < LIST_POOL_MAX) {
+        list->front = 0;
+        list->rear = 0;
+        list->size = 0;
+        g_list_pool[g_list_pool_count++] = list;
+    } else {
+        free(list->payload_block);
+        free(list->data);
+        free(list);
+    }
     PROFILE_INC(freelist_calls);
     PROFILE_ADD(freelist_ns, PROFILE_NOW_NS() - start);
 }

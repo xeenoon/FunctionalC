@@ -8,12 +8,15 @@
 #include "profiler.h"
 
 static List *mergemap_apply(List *data, void *ctx);
+static void ensure_compiled_pipeline(Observable *o);
+static bool stage_chain_is_streamable(CompiledStage *stages, int count);
 
 Observable *create_observable()
 {
     Observable *o = malloc(sizeof(Observable));
     o->data = init_list();
     o->cache = NULL;
+    o->compiled_pipeline = NULL;
     o->complete = false;
     o->pipe = NULL;
     o->subscriber = NULL;
@@ -118,13 +121,19 @@ static int list_active_size(List *list)
 
 static bool query_chain_is_streamable(Observable *o)
 {
+    ensure_compiled_pipeline(o);
+    return o->compiled_pipeline != NULL && o->compiled_pipeline->streamable;
+}
+
+static bool stage_chain_is_streamable(CompiledStage *stages, int count)
+{
     bool seen_reduce = false;
     bool seen_last = false;
-    Observable *current = o;
-    while (current != NULL && current->emit_handler != NULL)
+    for (int i = 0; i < count; ++i)
     {
-        QueryKind kind = current->emit_handler->kind;
+        QueryKind kind = stages[i].kind;
         if (kind != QUERY_KIND_MAP &&
+            kind != QUERY_KIND_MAP_CHAIN &&
             kind != QUERY_KIND_FILTER &&
             kind != QUERY_KIND_REDUCE &&
             kind != QUERY_KIND_SCAN &&
@@ -146,9 +155,96 @@ static bool query_chain_is_streamable(Observable *o)
         {
             seen_last = true;
         }
-        current = current->pipe;
     }
     return true;
+}
+
+static void ensure_compiled_pipeline(Observable *o)
+{
+    if (o == NULL || o->compiled_pipeline != NULL || o->emit_handler == NULL)
+    {
+        return;
+    }
+
+    int count = 0;
+    Observable *current = o;
+    while (current != NULL && current->emit_handler != NULL)
+    {
+        ++count;
+        current = current->pipe;
+    }
+
+    CompiledPipeline *compiled = malloc(sizeof(CompiledPipeline));
+    compiled->stages = count > 0 ? malloc((size_t)count * sizeof(CompiledStage)) : NULL;
+    compiled->count = 0;
+    compiled->streamable = false;
+    compiled->mergemap_then_streamable = false;
+    compiled->stream_start_index = -1;
+
+    current = o;
+    while (current != NULL && current->emit_handler != NULL)
+    {
+        Query *query = current->emit_handler;
+        if (query->kind == QUERY_KIND_MAP)
+        {
+            int map_count = 0;
+            Observable *scan = current;
+            while (scan != NULL &&
+                   scan->emit_handler != NULL &&
+                   scan->emit_handler->kind == QUERY_KIND_MAP)
+            {
+                ++map_count;
+                scan = scan->pipe;
+            }
+
+            if (map_count == 1)
+            {
+                compiled->stages[compiled->count].query = query;
+                compiled->stages[compiled->count].kind = QUERY_KIND_MAP;
+                compiled->stages[compiled->count].ctx = query->ctx;
+                ++compiled->count;
+            }
+            else
+            {
+                CompiledMapChain *chain = malloc(sizeof(CompiledMapChain));
+                chain->funcs = malloc((size_t)map_count * sizeof(ModifierFunction));
+                chain->count = map_count;
+
+                for (int i = 0; i < map_count; ++i)
+                {
+                    MapCtx *ctx = (MapCtx *)current->emit_handler->ctx;
+                    chain->funcs[i] = ctx->pred;
+                    current = current->pipe;
+                }
+
+                compiled->stages[compiled->count].query = NULL;
+                compiled->stages[compiled->count].kind = QUERY_KIND_MAP_CHAIN;
+                compiled->stages[compiled->count].ctx = chain;
+                ++compiled->count;
+                continue;
+            }
+        }
+        else
+        {
+            compiled->stages[compiled->count].query = query;
+            compiled->stages[compiled->count].kind = query->kind;
+            compiled->stages[compiled->count].ctx = query->ctx;
+            ++compiled->count;
+        }
+        current = current->pipe;
+    }
+
+    compiled->streamable = stage_chain_is_streamable(compiled->stages, compiled->count);
+    if (compiled->count > 1 &&
+        compiled->stages[0].query != NULL &&
+        compiled->stages[0].query->func == mergemap_apply)
+    {
+        compiled->stream_start_index = 1;
+        compiled->mergemap_then_streamable =
+            stage_chain_is_streamable(&compiled->stages[1], compiled->count - 1);
+    }
+
+    o->compiled_pipeline = compiled;
 }
 
 static void reset_observable_data(Observable *o)
@@ -165,8 +261,9 @@ static void stream_emit_value(Observable *o, void *value)
     }
 }
 
-static void pop_all_streaming_chain(Observable *root, Observable *stage_root, List *data,
-                                    uint64_t total_start, uint64_t transform_start)
+static void pop_all_streaming_compiled(Observable *root, CompiledStage *stages, int stage_count,
+                                       List *data, uint64_t total_start,
+                                       uint64_t transform_start)
 {
     bool has_reduce = false;
     bool has_last = false;
@@ -186,43 +283,49 @@ static void pop_all_streaming_chain(Observable *root, Observable *stage_root, Li
 
         bool keep_item = true;
         void *current_value = item;
-        Observable *stage = stage_root;
-
-        while (stage != NULL && stage->emit_handler != NULL)
+        for (int stage_index = 0; stage_index < stage_count; ++stage_index)
         {
-            Query *query = stage->emit_handler;
-            if (query->kind == QUERY_KIND_MAP)
+            CompiledStage *stage = &stages[stage_index];
+            if (stage->kind == QUERY_KIND_MAP)
             {
-                MapCtx *ctx = (MapCtx *)query->ctx;
+                MapCtx *ctx = (MapCtx *)stage->ctx;
                 current_value = ctx->pred(current_value);
             }
-            else if (query->kind == QUERY_KIND_FILTER)
+            else if (stage->kind == QUERY_KIND_MAP_CHAIN)
             {
-                FilterCtx *ctx = (FilterCtx *)query->ctx;
+                CompiledMapChain *chain = (CompiledMapChain *)stage->ctx;
+                for (int i = 0; i < chain->count; ++i)
+                {
+                    current_value = chain->funcs[i](current_value);
+                }
+            }
+            else if (stage->kind == QUERY_KIND_FILTER)
+            {
+                FilterCtx *ctx = (FilterCtx *)stage->ctx;
                 if (!ctx->pred(current_value))
                 {
                     keep_item = false;
                     break;
                 }
             }
-            else if (query->kind == QUERY_KIND_REDUCE)
+            else if (stage->kind == QUERY_KIND_REDUCE)
             {
-                ScanCtx *ctx = (ScanCtx *)query->ctx;
+                ScanCtx *ctx = (ScanCtx *)stage->ctx;
                 reduced = ctx->pred(reduced, current_value);
                 has_reduce = true;
                 keep_item = false;
                 break;
             }
-            else if (query->kind == QUERY_KIND_SCAN)
+            else if (stage->kind == QUERY_KIND_SCAN)
             {
-                ScanCtx *ctx = (ScanCtx *)query->ctx;
+                ScanCtx *ctx = (ScanCtx *)stage->ctx;
                 void *next_value = ctx->pred(ctx->accum, current_value);
                 ctx->accum = next_value;
                 current_value = next_value;
             }
-            else if (query->kind == QUERY_KIND_DISTINCT_UNTIL_CHANGED)
+            else if (stage->kind == QUERY_KIND_DISTINCT_UNTIL_CHANGED)
             {
-                DistinctUntilChangedCtx *ctx = (DistinctUntilChangedCtx *)query->ctx;
+                DistinctUntilChangedCtx *ctx = (DistinctUntilChangedCtx *)stage->ctx;
                 void *projected = ctx->pred(current_value);
                 if (projected == ctx->last)
                 {
@@ -231,9 +334,9 @@ static void pop_all_streaming_chain(Observable *root, Observable *stage_root, Li
                 }
                 ctx->last = projected;
             }
-            else if (query->kind == QUERY_KIND_SKIP_WHILE)
+            else if (stage->kind == QUERY_KIND_SKIP_WHILE)
             {
-                SkipWhileCtx *ctx = (SkipWhileCtx *)query->ctx;
+                SkipWhileCtx *ctx = (SkipWhileCtx *)stage->ctx;
                 if (!ctx->passed && ctx->pred(current_value))
                 {
                     keep_item = false;
@@ -241,14 +344,13 @@ static void pop_all_streaming_chain(Observable *root, Observable *stage_root, Li
                 }
                 ctx->passed = true;
             }
-            else if (query->kind == QUERY_KIND_LAST)
+            else if (stage->kind == QUERY_KIND_LAST)
             {
                 last_value = current_value;
                 last_set = true;
                 has_last = true;
                 keep_item = false;
             }
-            stage = stage->pipe;
         }
 
         if (keep_item)
@@ -292,19 +394,26 @@ void pop_all(Observable *o)
 
     if (o->emit_handler && query_chain_is_streamable(o))
     {
-        pop_all_streaming_chain(o, o, data, total_start, PROFILE_NOW_NS());
+        pop_all_streaming_compiled(o, o->compiled_pipeline->stages,
+                                   o->compiled_pipeline->count, data, total_start,
+                                   PROFILE_NOW_NS());
         return;
     }
 
+    ensure_compiled_pipeline(o);
     if (o->emit_handler &&
-        o->emit_handler->func == mergemap_apply &&
-        o->pipe != NULL &&
-        query_chain_is_streamable(o->pipe))
+        o->compiled_pipeline != NULL &&
+        o->compiled_pipeline->mergemap_then_streamable)
     {
         uint64_t transform_start = PROFILE_NOW_NS();
         List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
         free_replaced_list(data, temp);
-        pop_all_streaming_chain(o, o->pipe, temp, total_start, transform_start);
+        pop_all_streaming_compiled(
+            o,
+            &o->compiled_pipeline->stages[o->compiled_pipeline->stream_start_index],
+            o->compiled_pipeline->count -
+                o->compiled_pipeline->stream_start_index,
+            temp, total_start, transform_start);
         return;
     }
 
