@@ -1,26 +1,28 @@
 #define _POSIX_C_SOURCE 200809L
 #include "observable.h"
-#include <stdlib.h>
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
-static long result_sum = 0;
+static int64_t result_sum = 0;
 
 void accumulate(void *v) {
-    result_sum = (long)v;
+    result_sum = (int64_t)(intptr_t)v;
 }
 
 void *square(void *v) {
-    long x = (long)v;
-    return (void *)(x * x);
+    intptr_t x = (intptr_t)v;
+    return (void *)(intptr_t)(x * x);
 }
 
 bool isEven_pred(void *v) {
-    return ((long)v) % 2 == 0;
+    return ((intptr_t)v) % 2 == 0;
 }
 
 void *add(void *accum, void *next) {
-    return (void *)((long)accum + (long)next);
+    return (void *)((intptr_t)accum + (intptr_t)next);
 }
 
 int main(int argc, char *argv[]) {
@@ -43,7 +45,7 @@ int main(int argc, char *argv[]) {
         total_ns += ns;
     }
 
-    printf("{\"result\": %ld, \"average_ms\": %.2f, \"runs\": %d, \"n\": %d}\n",
+    printf("{\"result\": %" PRId64 ", \"average_ms\": %.2f, \"runs\": %d, \"n\": %d}\n",
            result_sum, (double)total_ns / RUNS / 1e6, RUNS, N);
     return 0;
 }

@@ -1,9 +1,42 @@
-import subprocess
-import pytest
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import pytest
 from models import BenchmarkResult, Scenario
 
 BENCH_DIR = Path(__file__).parent.parent / 'benchmarks'
+
+
+def resolve_command(command: str) -> str:
+    if candidate := shutil.which(command):
+        return candidate
+
+    # Windows tools like npm are often exposed as .cmd files rather than .exe.
+    if candidate := shutil.which(f'{command}.cmd'):
+        return candidate
+
+    return command
+
+
+def resolve_binary_path(path: Path) -> Path:
+    if path.exists():
+        return path
+
+    if sys.platform == 'win32':
+        exe_path = path.with_suffix('.exe')
+        if exe_path.exists():
+            return exe_path
+
+    return path
+
+
+def make_target_name(scenario: Scenario, opt: str) -> str:
+    target = f'{scenario}_{opt}'
+    if sys.platform == 'win32':
+        return f'{target}.exe'
+    return target
 
 
 # ------------ Cleaning up generated binaries after tests are done ----------- #
@@ -23,8 +56,14 @@ def cleanup_generated_binaries():
 # ------------------- Installing npm before testing session ------------------ #
 @pytest.fixture(scope='session', autouse=True)
 def install_npm():
+    if (BENCH_DIR / 'node_modules' / 'rxjs').exists():
+        return
+
     subprocess.run(
-        ['npm', 'install'], cwd=BENCH_DIR, check=True, capture_output=True
+        [resolve_command('npm'), 'install'],
+        cwd=BENCH_DIR,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -53,12 +92,12 @@ def compile_c():
         key = (scenario, opt)
         if key not in _cache:
             subprocess.run(
-                ['make', f'{scenario}_{opt}'],
+                [resolve_command('make'), make_target_name(scenario, opt)],
                 cwd=BENCH_DIR,
                 check=True,
                 capture_output=True,
             )
-            _cache[key] = BENCH_DIR / f'{scenario}_{opt}'
+            _cache[key] = resolve_binary_path(BENCH_DIR / f'{scenario}_{opt}')
         return _cache[key]
 
     return _compile

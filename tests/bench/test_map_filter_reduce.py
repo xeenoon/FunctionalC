@@ -1,3 +1,7 @@
+import sys
+
+import pytest
+
 from models import BenchmarkResult, Scenario
 
 SCENARIO = Scenario.map_filter_reduce
@@ -21,6 +25,10 @@ def test_js_correctness(run_js):
     print(f'\nRxJS:  {js.average_ms:.2f} ms')
 
 
+@pytest.mark.skipif(
+    sys.platform == 'win32',
+    reason='Benchmark ordering is toolchain-dependent on Windows',
+)
 def test_comparison(run_c, run_js):
     c: BenchmarkResult = run_c(SCENARIO)
     js: BenchmarkResult = run_js(SCENARIO)

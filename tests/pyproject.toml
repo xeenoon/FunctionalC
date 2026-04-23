@@ -8,7 +8,14 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["."]
+addopts = "-p no:cacheprovider"
+testpaths = ["bench"]
+norecursedirs = [
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    "pytest-cache-files-*",
+]
 
 [tool.ruff]
 exclude = [

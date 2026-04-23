@@ -15,6 +15,7 @@ Observable *create_observable() {
     o->subscriber = NULL;
     o->emit_handler = NULL;
     o->on_subscription = NULL;
+    o->complete = false;
     o->ready = false;
     return o;
 }
