@@ -7,6 +7,8 @@
 #include "task.h"
 #include "profiler.h"
 
+static List *mergemap_apply(List *data, void *ctx);
+
 Observable *create_observable() {
     Observable *o = malloc(sizeof(Observable));
     o->data = init_list();
@@ -97,18 +99,24 @@ static int list_active_size(List *list) {
 
 static bool query_chain_is_streamable(Observable *o) {
     bool seen_reduce = false;
+    bool seen_last = false;
     Observable *current = o;
     while (current != NULL && current->emit_handler != NULL) {
         QueryKind kind = current->emit_handler->kind;
         if (kind != QUERY_KIND_MAP && kind != QUERY_KIND_FILTER &&
-            kind != QUERY_KIND_REDUCE) {
+            kind != QUERY_KIND_REDUCE && kind != QUERY_KIND_SCAN &&
+            kind != QUERY_KIND_DISTINCT_UNTIL_CHANGED &&
+            kind != QUERY_KIND_SKIP_WHILE && kind != QUERY_KIND_LAST) {
             return false;
         }
-        if (seen_reduce) {
+        if (seen_reduce || seen_last) {
             return false;
         }
         if (kind == QUERY_KIND_REDUCE) {
             seen_reduce = true;
+        }
+        if (kind == QUERY_KIND_LAST) {
+            seen_last = true;
         }
         current = current->pipe;
     }
@@ -126,22 +134,26 @@ static void stream_emit_value(Observable *o, void *value) {
     }
 }
 
-static void pop_all_streaming(Observable *o, List *data, uint64_t total_start) {
-    uint64_t transform_start = PROFILE_NOW_NS();
+static void pop_all_streaming_chain(Observable *root, Observable *stage_root,
+                                    List *data, uint64_t total_start,
+                                    uint64_t transform_start) {
     bool has_reduce = false;
+    bool has_last = false;
+    bool last_set = false;
     void *reduced = NULL;
+    void *last_value = NULL;
     int size = data->size;
 
     for (int i = 0; i < size; ++i) {
         void *item = data->data[i];
         if (isStreamComplete(item)) {
-            o->complete = true;
+            root->complete = true;
             break;
         }
 
         bool keep_item = true;
         void *current_value = item;
-        Observable *stage = o;
+        Observable *stage = stage_root;
 
         while (stage != NULL && stage->emit_handler != NULL) {
             Query *query = stage->emit_handler;
@@ -160,22 +172,50 @@ static void pop_all_streaming(Observable *o, List *data, uint64_t total_start) {
                 has_reduce = true;
                 keep_item = false;
                 break;
+            } else if (query->kind == QUERY_KIND_SCAN) {
+                ScanCtx *ctx = (ScanCtx *)query->ctx;
+                void *next_value = ctx->pred(ctx->accum, current_value);
+                ctx->accum = next_value;
+                current_value = next_value;
+            } else if (query->kind == QUERY_KIND_DISTINCT_UNTIL_CHANGED) {
+                DistinctUntilChangedCtx *ctx =
+                    (DistinctUntilChangedCtx *)query->ctx;
+                void *projected = ctx->pred(current_value);
+                if (projected == ctx->last) {
+                    keep_item = false;
+                    break;
+                }
+                ctx->last = projected;
+            } else if (query->kind == QUERY_KIND_SKIP_WHILE) {
+                SkipWhileCtx *ctx = (SkipWhileCtx *)query->ctx;
+                if (!ctx->passed && ctx->pred(current_value)) {
+                    keep_item = false;
+                    break;
+                }
+                ctx->passed = true;
+            } else if (query->kind == QUERY_KIND_LAST) {
+                last_value = current_value;
+                last_set = true;
+                has_last = true;
+                keep_item = false;
             }
             stage = stage->pipe;
         }
 
         if (keep_item) {
-            stream_emit_value(o, current_value);
+            stream_emit_value(root, current_value);
         }
     }
 
     if (has_reduce) {
-        stream_emit_value(o, reduced);
+        stream_emit_value(root, reduced);
+    } else if (has_last && last_set) {
+        stream_emit_value(root, last_value);
     }
 
     PROFILE_ADD(pop_all_transform_ns, PROFILE_NOW_NS() - transform_start);
     freelist(data);
-    reset_observable_data(o);
+    reset_observable_data(root);
     PROFILE_INC(pop_all_calls);
     PROFILE_ADD(pop_all_ns, PROFILE_NOW_NS() - total_start);
 }
@@ -198,7 +238,16 @@ void pop_all(Observable *o) {
     }
 
     if (o->emit_handler && query_chain_is_streamable(o)) {
-        pop_all_streaming(o, data, total_start);
+        pop_all_streaming_chain(o, o, data, total_start, PROFILE_NOW_NS());
+        return;
+    }
+
+    if (o->emit_handler && o->emit_handler->func == mergemap_apply &&
+        o->pipe != NULL && query_chain_is_streamable(o->pipe)) {
+        uint64_t transform_start = PROFILE_NOW_NS();
+        List *temp = o->emit_handler->func(data, o->emit_handler->ctx);
+        free_replaced_list(data, temp);
+        pop_all_streaming_chain(o, o->pipe, temp, total_start, transform_start);
         return;
     }
 
@@ -464,7 +513,7 @@ Query *distinctUntilChanged(ModifierFunction comp) {
     Query *result = malloc(sizeof(Query));
     result->func = distinct_until_changed_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
+    result->kind = QUERY_KIND_DISTINCT_UNTIL_CHANGED;
     return result;
 }
 
@@ -605,7 +654,7 @@ Query *skipWhile(BooleanFunction func) {
     Query *result = malloc(sizeof(Query));
     result->func = skip_while_apply;
     result->ctx = ctx;
-    result->kind = QUERY_KIND_GENERIC;
+    result->kind = QUERY_KIND_SKIP_WHILE;
     return result;
 }
 
@@ -775,7 +824,7 @@ Query *scan(AccumulatorFunction accumulator) {
     Query *q = malloc(sizeof(*q));
     q->func = scan_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_GENERIC;
+    q->kind = QUERY_KIND_SCAN;
     return q;
 }
 
@@ -786,7 +835,7 @@ Query *scanfrom(AccumulatorFunction accumulator, void *from) {
     Query *q = malloc(sizeof(*q));
     q->func = scan_apply;
     q->ctx = ctx;
-    q->kind = QUERY_KIND_GENERIC;
+    q->kind = QUERY_KIND_SCAN;
     return q;
 }
 
@@ -836,7 +885,7 @@ Query *last() {
     Query *q = malloc(sizeof(*q));
     q->func = last_apply;
     q->ctx = NULL;
-    q->kind = QUERY_KIND_GENERIC;
+    q->kind = QUERY_KIND_LAST;
     return q;
 }
 

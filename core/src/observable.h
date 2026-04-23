@@ -10,7 +10,11 @@ typedef enum {
     QUERY_KIND_GENERIC = 0,
     QUERY_KIND_FILTER,
     QUERY_KIND_MAP,
-    QUERY_KIND_REDUCE
+    QUERY_KIND_REDUCE,
+    QUERY_KIND_SCAN,
+    QUERY_KIND_DISTINCT_UNTIL_CHANGED,
+    QUERY_KIND_SKIP_WHILE,
+    QUERY_KIND_LAST
 } QueryKind;
 
 typedef void (*Subscriber)(void *arg);
