@@ -19,6 +19,7 @@ typedef enum
 typedef enum
 {
     RX_STAGE_MAP,
+    RX_STAGE_PAIR_MAP,
     RX_STAGE_MAP_CHAIN,
     RX_STAGE_FILTER,
     RX_STAGE_SCAN,

@@ -35,7 +35,7 @@ class BenchmarkScenario:
     runs: int
     ops: tuple[Operation, ...]
     source: SourceSpec = SourceSpec()
-    backends: tuple[str, ...] = ('raw_c', 'library_c', 'dsl_c', 'typescript')
+    backends: tuple[str, ...] = ('raw_c', 'library_c', 'planner_c', 'dsl_c', 'typescript')
 
     def describe(self) -> str:
         parts: list[str] = []
@@ -328,7 +328,7 @@ SCENARIOS = (
         n=10_000,
         runs=3,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -343,7 +343,7 @@ SCENARIOS = (
         n=500_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -358,7 +358,7 @@ SCENARIOS = (
         n=1_000,
         runs=3,
         source=SourceSpec('merge_map_range', inner_n=1_000),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -373,7 +373,7 @@ SCENARIOS = (
         n=10_000,
         runs=1,
         source=SourceSpec('merge_map_range', inner_n=10_000),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=(
             Operation('pairMap', 'pairSum'),
             Operation('scan', 'sum'),
@@ -388,7 +388,7 @@ SCENARIOS = (
         n=100_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=_zip_pair_map_chain(100),
     ),
     BenchmarkScenario(
@@ -396,7 +396,7 @@ SCENARIOS = (
         n=100_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=_zip_stateful_chain(50),
     ),
     BenchmarkScenario(
@@ -404,7 +404,7 @@ SCENARIOS = (
         n=500_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=_zip_stateful_chain(50),
     ),
     BenchmarkScenario(
@@ -412,7 +412,7 @@ SCENARIOS = (
         n=1_000_000,
         runs=1,
         source=SourceSpec('zip_range'),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=_zip_stateful_chain(50),
     ),
     BenchmarkScenario(
@@ -420,7 +420,7 @@ SCENARIOS = (
         n=1_000,
         runs=1,
         source=SourceSpec('merge_map_range', inner_n=1_000),
-        backends=('raw_c', 'library_c', 'typescript'),
+        backends=('raw_c', 'library_c', 'planner_c', 'typescript'),
         ops=_mergemap_stateful_chain(150),
     ),
     BenchmarkScenario(
@@ -665,6 +665,118 @@ def _c_function(spec: FunctionSpec) -> str:
             f'{{ return {spec.c_expr}; }}'
         )
     return f'static intptr_t {spec.name}(intptr_t x) {{ return {spec.c_expr}; }}'
+
+
+def _planner_helper_prototype(spec: FunctionSpec) -> str:
+    if spec.name == 'pairSum':
+        return 'void *pairSum(void *left_raw, void *right_raw);'
+    if spec.kind == 'predicate':
+        return f'bool {spec.name}(void *raw);'
+    if spec.kind == 'accumulator':
+        return f'void *{spec.name}(void *raw_accum, void *raw_next);'
+    return f'void *{spec.name}(void *raw);'
+
+
+def _planner_helper_function(spec: FunctionSpec) -> str:
+    if spec.name == 'pairSum':
+        return (
+            'void *pairSum(void *left_raw, void *right_raw) { '
+            'intptr_t left = (intptr_t)left_raw; '
+            'intptr_t right = (intptr_t)right_raw; '
+            'return (void *)(intptr_t)(left + right); }'
+        )
+    if spec.kind == 'predicate':
+        return (
+            f'bool {spec.name}(void *raw) {{ '
+            f'intptr_t x = (intptr_t)raw; return {spec.c_expr}; }}'
+        )
+    if spec.kind == 'accumulator':
+        return (
+            f'void *{spec.name}(void *raw_accum, void *raw_next) {{ '
+            f'intptr_t accum = (intptr_t)raw_accum; '
+            f'intptr_t next = (intptr_t)raw_next; '
+            f'return (void *)(intptr_t)({spec.c_expr}); }}'
+        )
+    return (
+        f'void *{spec.name}(void *raw) {{ '
+        f'intptr_t x = (intptr_t)raw; '
+        f'return (void *)(intptr_t)({spec.c_expr}); }}'
+    )
+
+
+def planner_backend_supported(scenario: BenchmarkScenario) -> bool:
+    if scenario.source.kind not in {'range', 'zip_range'}:
+        return False
+
+    supported_ops = {
+        'map',
+        'pairMap',
+        'filter',
+        'scan',
+        'reduce',
+        'take',
+        'skip',
+        'takeWhile',
+        'skipWhile',
+        'distinctUntilChanged',
+        'last',
+        'first',
+    }
+    if not all(op.kind in supported_ops for op in scenario.ops):
+        return False
+    if scenario.source.kind == 'zip_range':
+        return len(scenario.ops) > 0 and scenario.ops[0].kind == 'pairMap'
+    return True
+
+
+def generate_planner_spec(scenario: BenchmarkScenario) -> str:
+    if not planner_backend_supported(scenario):
+        raise ValueError(f'Planner backend does not support scenario {scenario.name}')
+
+    source_name = 'zip_range' if scenario.source.kind == 'zip_range' else 'range'
+    lines = [f'pipeline {scenario.name}', f'source {source_name}']
+    for op in scenario.ops:
+        if op.kind in {'map', 'pairMap', 'filter', 'scan', 'takeWhile', 'skipWhile', 'distinctUntilChanged'}:
+            lines.append(f'{op.kind} {op.arg}')
+        elif op.kind == 'reduce':
+            if op.extra is None:
+                lines.append(f'reduce {op.arg}')
+            else:
+                lines.append(f'reduce {op.arg} {op.extra}')
+        elif op.kind in {'take', 'skip'}:
+            lines.append(f'{op.kind} {op.arg}')
+        elif op.kind in {'last', 'first'}:
+            lines.append(op.kind)
+        else:
+            raise ValueError(f'Unsupported planner op: {op.kind}')
+    lines.append('')
+    return '\n'.join(lines)
+
+
+def generate_planner_helper_header(scenario: BenchmarkScenario) -> str:
+    prototypes = '\n'.join(
+        _planner_helper_prototype(spec) for spec in _required_functions(scenario)
+    )
+    return (
+        '#ifndef PLANNER_BENCH_HELPERS_H\n'
+        '#define PLANNER_BENCH_HELPERS_H\n'
+        '#include <stdbool.h>\n'
+        '#include <stdint.h>\n'
+        f'{prototypes}\n'
+        '#endif\n'
+    )
+
+
+def generate_planner_helper_source(scenario: BenchmarkScenario) -> str:
+    functions = '\n'.join(
+        _planner_helper_function(spec) for spec in _required_functions(scenario)
+    )
+    return (
+        '#include <stdint.h>\n'
+        '#include <stdbool.h>\n'
+        '#include "planner_helpers.h"\n\n'
+        f'{functions}\n'
+    )
 
 
 def _library_c_function(spec: FunctionSpec) -> str:
@@ -1148,11 +1260,23 @@ def write_scenario_sources(base_dir: Path, scenario: BenchmarkScenario) -> dict[
 
     raw_c_path = scenario_dir / f'{scenario.name}_raw.c'
     library_c_path = scenario_dir / f'{scenario.name}_library.c'
+    planner_spec_path = scenario_dir / f'{scenario.name}_planner.spec'
+    planner_helper_h_path = scenario_dir / 'planner_helpers.h'
+    planner_helper_c_path = scenario_dir / f'{scenario.name}_planner_helpers.c'
+    planner_generated_c_path = scenario_dir / f'{scenario.name}_planner_generated.c'
     dsl_path = scenario_dir / f'{scenario.name}.dsl'
     ts_path = scenario_dir / f'{scenario.name}.ts'
 
     raw_c_path.write_text(generate_raw_c_source(scenario), encoding='utf-8')
     library_c_path.write_text(generate_library_c_source(scenario), encoding='utf-8')
+    if planner_backend_supported(scenario):
+        planner_spec_path.write_text(generate_planner_spec(scenario), encoding='utf-8')
+        planner_helper_h_path.write_text(
+            generate_planner_helper_header(scenario), encoding='utf-8'
+        )
+        planner_helper_c_path.write_text(
+            generate_planner_helper_source(scenario), encoding='utf-8'
+        )
     if 'dsl_c' in scenario.backends:
         dsl_path.write_text(generate_dsl_source(scenario), encoding='utf-8')
     ts_path.write_text(generate_ts_source(scenario), encoding='utf-8')
@@ -1161,10 +1285,15 @@ def write_scenario_sources(base_dir: Path, scenario: BenchmarkScenario) -> dict[
         'dir': scenario_dir,
         'raw_c': raw_c_path,
         'library_c': library_c_path,
+        'planner_spec': planner_spec_path,
+        'planner_helper_h': planner_helper_h_path,
+        'planner_helper_c': planner_helper_c_path,
+        'planner_c': planner_generated_c_path,
         'dsl': dsl_path,
         'ts': ts_path,
         'raw_binary': scenario_dir / f'{scenario.name}_raw.exe',
         'library_binary': scenario_dir / f'{scenario.name}_library.exe',
+        'planner_binary': scenario_dir / f'{scenario.name}_planner.exe',
         'dsl_c': scenario_dir / f'{scenario.name}_dsl.c',
         'dsl_binary': scenario_dir / f'{scenario.name}_dsl.exe',
     }

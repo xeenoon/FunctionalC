@@ -40,6 +40,7 @@ typedef struct
 typedef enum
 {
     RX_OP_ASSIGN_INPUT,
+    RX_OP_CALL_PAIR_MAP,
     RX_OP_CALL_MAP,
     RX_OP_CALL_MAP_CHAIN,
     RX_OP_CALL_FILTER,

@@ -14,8 +14,8 @@ from models import BenchmarkResult
 ROOT_DIR = Path(__file__).parent.parent
 BENCH_DIR = ROOT_DIR / 'benchmarks'
 OUT_DIR = ROOT_DIR / 'out' / 'benchmarks'
-ALL_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'dsl_c', 'typescript')
-C_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'dsl_c')
+ALL_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'planner_c', 'dsl_c', 'typescript')
+C_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'planner_c', 'dsl_c')
 
 
 def resolve_command(command: str) -> str:
@@ -60,7 +60,7 @@ def pytest_addoption(parser):
     parser.addoption(
         '--c-only',
         action='store_true',
-        help='Run only C backends (raw_c, library_c, dsl_c) and skip TypeScript.',
+        help='Run only C backends (raw_c, library_c, planner_c, dsl_c) and skip TypeScript.',
     )
 
 
@@ -117,6 +117,33 @@ def pipeline_codegen_binary(benchmark_workspace: Path) -> Path:
             'core/tools/lowering.c',
             'core/tools/operator_registry.c',
             'core/tools/planner.c',
+            '-o',
+            str(binary),
+        ],
+        cwd=ROOT_DIR,
+        check=True,
+        capture_output=True,
+    )
+    return binary
+
+
+@pytest.fixture(scope='session')
+def planner_codegen_binary(benchmark_workspace: Path) -> Path:
+    binary = resolve_binary_path(benchmark_workspace / 'planner_codegen')
+    subprocess.run(
+        [
+            resolve_command('gcc'),
+            '-O2',
+            '-I./core/planner',
+            'core/planner/main.c',
+            'core/planner/diagnostics.c',
+            'core/planner/string_builder.c',
+            'core/planner/function_registry.c',
+            'core/planner/simplify.c',
+            'core/planner/lower.c',
+            'core/planner/c_codegen.c',
+            'core/planner/transpiler.c',
+            'core/planner/compiled_segment.c',
             '-o',
             str(binary),
         ],
@@ -201,6 +228,59 @@ def run_library_c(scenario_artifacts):
                 capture_output=True,
             )
             cache[scenario.name] = artifacts['library_binary']
+
+        stdout = subprocess.run(
+            [str(cache[scenario.name]), str(scenario.n), str(scenario.runs)],
+            cwd=ROOT_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return BenchmarkResult.parse_json(stdout)
+
+    return _run
+
+
+@pytest.fixture(scope='session')
+def run_planner_c(planner_codegen_binary: Path, scenario_artifacts):
+    cache: dict[str, Path] = {}
+
+    def _run(scenario: BenchmarkScenario) -> BenchmarkResult | None:
+        artifacts = scenario_artifacts(scenario)
+        if not artifacts['planner_spec'].exists():
+            return None
+
+        if scenario.name not in cache:
+            subprocess.run(
+                [
+                    str(planner_codegen_binary),
+                    '--spec',
+                    str(artifacts['planner_spec']),
+                    '--output',
+                    str(artifacts['planner_c']),
+                    '--header',
+                    artifacts['planner_helper_h'].name,
+                ],
+                cwd=artifacts['dir'],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    resolve_command('gcc'),
+                    '-O3',
+                    '-I.',
+                    str(artifacts['planner_c']),
+                    str(artifacts['planner_helper_c']),
+                    '-o',
+                    str(artifacts['planner_binary']),
+                ],
+                cwd=artifacts['dir'],
+                check=True,
+                capture_output=True,
+            )
+            cache[scenario.name] = artifacts['planner_binary']
 
         stdout = subprocess.run(
             [str(cache[scenario.name]), str(scenario.n), str(scenario.runs)],
