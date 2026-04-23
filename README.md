@@ -10,16 +10,20 @@ The current benchmark suite shows the same overall pattern across the tested sce
 
 - for smaller synchronous pipelines, the raw C path is typically around 100x faster than the TypeScript/RxJS version
 - the DSL-transpiled C path is also consistently faster than TypeScript/RxJS, while preserving the observable-style pipeline shape
-- for heavier backend-style stress cases, especially very deep operator chains or very large data volumes, the gap becomes much larger
+- for heavier backend-style stress cases, especially very deep operator chains, zipped streams, or very large data volumes, the gap becomes much larger
+
+This is the main purpose of the library: to make backend scaling with RxJS-style pipelines viable when the workload is too large or too latency-sensitive for a standard TypeScript implementation.
 
 Examples from the current benchmark output:
 
-- `s01_map_reduce`: raw C `0.02622 ms` vs TypeScript `3.47722 ms`, roughly `133x` faster
-- `s02_map_filter_reduce`: raw C `0.05702 ms` vs TypeScript `5.28536 ms`, roughly `93x` faster
-- `s11_map_reduce_x1000_items`: raw C `29.36070 ms` vs TypeScript `1662.24730 ms`, roughly `57x` faster on a much larger data volume
+- `s01_map_reduce`: raw C `0.02622 ms` vs TypeScript `3.47722 ms`, an exact speedup of `132.62x`
+- `s02_map_filter_reduce`: raw C `0.05702 ms` vs TypeScript `5.28536 ms`, an exact speedup of `92.69x`
+- `s11_map_reduce_x1000_items`: raw C `29.36070 ms` vs TypeScript `1662.24730 ms`, an exact speedup of `56.61x` on a much larger data volume
 - `s12_chain_10000_x1000_items`: raw C `0.00010 ms` vs TypeScript `20.08890 ms`, with the TypeScript/RxJS version also failing to produce the expected result in that stress case
+- `s13_zip_complex_small`: raw C `0.02273 ms` vs TypeScript `7.01493 ms`, an exact speedup of `308.62x` for a zipped, stateful operator chain
+- `s14_zip_complex_large`: raw C `0.51960 ms` vs TypeScript `53568.75100 ms`, an exact speedup of `103096.13x` for a larger backend-style zipped workload
 
-Taken together, these benchmarks show the intended use case of the library clearly: for ordinary backend pipeline work, the system is often around 100x faster than the equivalent TypeScript/RxJS implementation, and for heavy-duty workloads involving very deep chains or extreme throughput, the measured gap can reach into the thousands of times faster depending on the scenario.
+Taken together, these benchmarks show the intended use case of the library clearly: for ordinary backend pipeline work, the system is often around 100x faster than the equivalent TypeScript/RxJS implementation, and for heavy-duty workloads involving deep chains, zipped streams, or large-scale throughput, the measured gap can reach into the thousands or even more than 10000x faster depending on the scenario.
 
 The repository currently contains:
 

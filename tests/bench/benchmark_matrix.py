@@ -23,11 +23,18 @@ class Operation:
 
 
 @dataclass(frozen=True)
+class SourceSpec:
+    kind: str = 'range'
+
+
+@dataclass(frozen=True)
 class BenchmarkScenario:
     name: str
     n: int
     runs: int
     ops: tuple[Operation, ...]
+    source: SourceSpec = SourceSpec()
+    backends: tuple[str, ...] = ('raw_c', 'dsl_c', 'typescript')
 
     def describe(self) -> str:
         parts: list[str] = []
@@ -40,12 +47,21 @@ class BenchmarkScenario:
                 parts.append(f'{op.kind}({op.arg})')
             elif op.kind == 'last':
                 parts.append('last()')
+            elif op.kind == 'pairMap':
+                parts.append(f'map({op.arg})')
             else:
                 parts.append(op.kind)
         if len(parts) > 16:
             preview = parts[:8] + [f'... ({len(parts) - 11} more ops) ...'] + parts[-3:]
             return ' -> '.join(preview)
         return ' -> '.join(parts)
+
+    def source_description(self) -> str:
+        if self.source.kind == 'range':
+            return 'range(1, N)'
+        if self.source.kind == 'zip_range':
+            return 'zip(range(1, N), range(1, N))'
+        return self.source.kind
 
 
 def _value_func(
@@ -122,6 +138,13 @@ FUNCTIONS = {
         'accum + next',
         'acc + x',
         lambda accum, next_value: accum + next_value,
+    ),
+    'pairSum': _value_func(
+        'pairSum',
+        'pairSum(x)',
+        'x',
+        'pair[0] + pair[1]',
+        lambda pair: pair[0] + pair[1],
     ),
 }
 
@@ -243,14 +266,52 @@ SCENARIOS = (
         runs=1,
         ops=_long_map_chain(10_000),
     ),
+    BenchmarkScenario(
+        's13_zip_complex_small',
+        n=10_000,
+        runs=3,
+        source=SourceSpec('zip_range'),
+        backends=('raw_c', 'typescript'),
+        ops=(
+            Operation('pairMap', 'pairSum'),
+            Operation('scan', 'sum'),
+            Operation('map', 'div10'),
+            Operation('distinctUntilChanged', 'identity'),
+            Operation('skipWhile', 'lt5000'),
+            Operation('last'),
+        ),
+    ),
+    BenchmarkScenario(
+        's14_zip_complex_large',
+        n=500_000,
+        runs=1,
+        source=SourceSpec('zip_range'),
+        backends=('raw_c', 'typescript'),
+        ops=(
+            Operation('pairMap', 'pairSum'),
+            Operation('scan', 'sum'),
+            Operation('map', 'div10'),
+            Operation('distinctUntilChanged', 'identity'),
+            Operation('skipWhile', 'lt5000'),
+            Operation('last'),
+        ),
+    ),
 )
 
 
 def expected_result(scenario: BenchmarkScenario) -> int:
-    values = list(range(1, scenario.n + 1))
+    if scenario.source.kind == 'range':
+        values = list(range(1, scenario.n + 1))
+    elif scenario.source.kind == 'zip_range':
+        values = [(value, value) for value in range(1, scenario.n + 1)]
+    else:
+        raise ValueError(f'Unsupported scenario source for evaluator: {scenario.source.kind}')
 
     for op in scenario.ops:
         if op.kind == 'map':
+            fn = FUNCTIONS[str(op.arg)].py_impl
+            values = [int(fn(value)) for value in values]
+        elif op.kind == 'pairMap':
             fn = FUNCTIONS[str(op.arg)].py_impl
             values = [int(fn(value)) for value in values]
         elif op.kind == 'filter':
@@ -328,6 +389,9 @@ def _dsl_function(spec: FunctionSpec) -> str:
 
 
 def generate_dsl_source(scenario: BenchmarkScenario) -> str:
+    if scenario.source.kind != 'range':
+        raise ValueError(f'DSL generation does not support source {scenario.source.kind}')
+
     lines = [_dsl_function(spec) for spec in _required_functions(scenario)]
     if lines:
         lines.append('')
@@ -336,6 +400,8 @@ def generate_dsl_source(scenario: BenchmarkScenario) -> str:
     for op in scenario.ops:
         if op.kind == 'map':
             op_lines.append(f'map({op.arg})')
+        elif op.kind == 'pairMap':
+            raise ValueError('DSL generation does not support pairMap operations')
         elif op.kind == 'filter':
             op_lines.append(f'filter({op.arg})')
         elif op.kind == 'reduce':
@@ -409,16 +475,32 @@ def generate_raw_c_source(scenario: BenchmarkScenario) -> str:
         state_lines.append('    intptr_t last_key = 0;')
         state_lines.append('    bool has_last_key = false;')
 
-    body_lines = [
-        '    for (intptr_t src = 1; src <= (intptr_t)N; ++src) {',
-        '        intptr_t value = src;',
-        '        bool emit_value = true;',
-        '        bool break_after_emit = false;',
-    ]
+    if scenario.source.kind == 'range':
+        body_lines = [
+            '    for (intptr_t src = 1; src <= (intptr_t)N; ++src) {',
+            '        intptr_t value = src;',
+            '        bool emit_value = true;',
+            '        bool break_after_emit = false;',
+        ]
+    elif scenario.source.kind == 'zip_range':
+        body_lines = [
+            '    for (intptr_t src = 1; src <= (intptr_t)N; ++src) {',
+            '        intptr_t left = src;',
+            '        intptr_t right = src;',
+            '        intptr_t value = 0;',
+            '        bool emit_value = true;',
+            '        bool break_after_emit = false;',
+        ]
+    else:
+        raise ValueError(f'Unsupported raw C source: {scenario.source.kind}')
 
     for op in scenario.ops:
         if op.kind == 'map':
             body_lines.append(f'        value = {op.arg}(value);')
+        elif op.kind == 'pairMap':
+            if op.arg != 'pairSum':
+                raise ValueError(f'Unsupported pair map op: {op.arg}')
+            body_lines.append('        value = left + right;')
         elif op.kind == 'filter':
             body_lines.append(f'        if (!{op.arg}(value)) {{ continue; }}')
         elif op.kind == 'reduce':
@@ -514,28 +596,33 @@ def _ts_function(spec: FunctionSpec) -> str:
 
 
 def generate_ts_source(scenario: BenchmarkScenario) -> str:
-    operator_names = {'range'}
+    source_names = {'range'}
     for op in scenario.ops:
         if op.kind == 'map':
-            operator_names.add('map')
+            source_names.add('map')
+        elif op.kind == 'pairMap':
+            source_names.add('map')
         elif op.kind == 'filter':
-            operator_names.add('filter')
+            source_names.add('filter')
         elif op.kind == 'reduce':
-            operator_names.add('reduce')
+            source_names.add('reduce')
         elif op.kind == 'scan':
-            operator_names.add('scan')
+            source_names.add('scan')
         elif op.kind == 'take':
-            operator_names.add('take')
+            source_names.add('take')
         elif op.kind == 'skip':
-            operator_names.add('skip')
+            source_names.add('skip')
         elif op.kind == 'takeWhile':
-            operator_names.add('takeWhile')
+            source_names.add('takeWhile')
         elif op.kind == 'skipWhile':
-            operator_names.add('skipWhile')
+            source_names.add('skipWhile')
         elif op.kind == 'distinctUntilChanged':
-            operator_names.add('distinctUntilChanged')
+            source_names.add('distinctUntilChanged')
         elif op.kind == 'last':
-            operator_names.add('last')
+            source_names.add('last')
+
+    if scenario.source.kind == 'zip_range':
+        source_names.add('zip')
 
     helper_lines = '\n'.join(
         _ts_function(spec) for spec in _required_functions(scenario)
@@ -545,6 +632,10 @@ def generate_ts_source(scenario: BenchmarkScenario) -> str:
     for op in scenario.ops:
         if op.kind == 'map':
             pipe_lines.append(f'map({op.arg})')
+        elif op.kind == 'pairMap':
+            if op.arg != 'pairSum':
+                raise ValueError(f'Unsupported TypeScript pairMap op: {op.arg}')
+            pipe_lines.append('map((pair) => pair[0] + pair[1])')
         elif op.kind == 'filter':
             pipe_lines.append(f'filter({op.arg})')
         elif op.kind == 'reduce':
@@ -566,9 +657,20 @@ def generate_ts_source(scenario: BenchmarkScenario) -> str:
         else:
             raise ValueError(f'Unsupported TypeScript op: {op.kind}')
 
+    if scenario.source.kind == 'range':
+        source_expr = 'range(1, N)'
+        root_imports = 'range'
+    elif scenario.source.kind == 'zip_range':
+        source_expr = 'zip(range(1, N), range(1, N))'
+        root_imports = 'range, zip'
+    else:
+        raise ValueError(f'Unsupported TypeScript source: {scenario.source.kind}')
+
+    operator_imports = ', '.join(sorted(name for name in source_names if name not in {'range', 'zip'}))
+
     return f"""const {{ performance }} = require('node:perf_hooks');
-const {{ range }} = require('rxjs');
-const {{ {', '.join(sorted(name for name in operator_names if name != 'range'))} }} = require('rxjs/operators');
+const {{ {root_imports} }} = require('rxjs');
+const {{ {operator_imports} }} = require('rxjs/operators');
 
 {helper_lines}
 
@@ -582,7 +684,7 @@ for (let run = 0; run < RUNS; run++) {{
     result = 0;
     const start = performance.now();
 
-    let observable = range(1, N);
+    let observable = {source_expr};
 {chr(10).join(f'    observable = observable.pipe({line});' for line in pipe_lines)}
     observable.subscribe((value: number) => {{
         result = Number(value);
@@ -604,7 +706,8 @@ def write_scenario_sources(base_dir: Path, scenario: BenchmarkScenario) -> dict[
     ts_path = scenario_dir / f'{scenario.name}.ts'
 
     raw_c_path.write_text(generate_raw_c_source(scenario), encoding='utf-8')
-    dsl_path.write_text(generate_dsl_source(scenario), encoding='utf-8')
+    if 'dsl_c' in scenario.backends:
+        dsl_path.write_text(generate_dsl_source(scenario), encoding='utf-8')
     ts_path.write_text(generate_ts_source(scenario), encoding='utf-8')
 
     return {
