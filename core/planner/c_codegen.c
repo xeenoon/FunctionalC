@@ -438,6 +438,114 @@ static bool emit_function_declarations(
     return true;
 }
 
+static const char *op_label(const RxLoopOp *op)
+{
+    switch (op->kind)
+    {
+        case RX_OP_CALL_PAIR_MAP:
+            return "pairMap";
+        case RX_OP_CALL_MAP:
+            return "map";
+        case RX_OP_CALL_FILTER:
+            return "filter";
+        case RX_OP_CALL_SCAN:
+            return "scan";
+        case RX_OP_CALL_REDUCE:
+            return "reduce";
+        case RX_OP_CALL_MAP_TO:
+            return "mapTo";
+        case RX_OP_APPLY_TAKE:
+            return "take";
+        case RX_OP_APPLY_SKIP:
+            return "skip";
+        case RX_OP_APPLY_TAKE_WHILE:
+            return "takeWhile";
+        case RX_OP_APPLY_SKIP_WHILE:
+            return "skipWhile";
+        case RX_OP_APPLY_DISTINCT_UNTIL_CHANGED:
+            return "distinctUntilChanged";
+        case RX_OP_APPLY_LAST:
+            return "last";
+        case RX_OP_APPLY_FIRST:
+            return "first";
+        default:
+            return "unknown";
+    }
+}
+
+static bool emit_profile_decls(
+    const RxLoweredPipeline *pipeline,
+    RxStringBuilder *out)
+{
+    if (!rx_string_builder_append(
+            out,
+            "#ifdef RX_PLANNER_PROFILE\n"
+            "typedef struct {\n"
+            "    const char *name;\n"
+            "    uint64_t hits;\n"
+            "    uint64_t total_ns;\n"
+            "} RxProfileSlot;\n\n"))
+    {
+        return false;
+    }
+
+    if (!rx_string_builder_append_format(
+            out,
+            "static RxProfileSlot rx_profile_slots_%s[] = {\n",
+            pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+    {
+        return false;
+    }
+    for (int index = 0; index < pipeline->op_count; ++index)
+    {
+        if (!rx_string_builder_append_format(
+                out,
+                "    {\"%s[%d]\", 0, 0},\n",
+                op_label(&pipeline->ops[index]),
+                index))
+        {
+            return false;
+        }
+    }
+    if (!rx_string_builder_append(
+            out,
+            "};\n"
+            "static uint64_t rx_profile_diff_ns(struct timespec start, struct timespec end) {\n"
+            "    return (uint64_t)(end.tv_sec - start.tv_sec) * 1000000000ULL + (uint64_t)(end.tv_nsec - start.tv_nsec);\n"
+            "}\n"
+            "#define RX_PROFILE_STAGE_BEGIN(ID) struct timespec __rx_stage_start_##ID, __rx_stage_end_##ID; clock_gettime(CLOCK_MONOTONIC, &__rx_stage_start_##ID)\n"
+            "#define RX_PROFILE_STAGE_END(ID) do { clock_gettime(CLOCK_MONOTONIC, &__rx_stage_end_##ID); rx_profile_slots_"))
+    {
+        return false;
+    }
+    if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+    {
+        return false;
+    }
+    if (!rx_string_builder_append(
+            out,
+            "[ID].hits += 1; rx_profile_slots_"))
+    {
+        return false;
+    }
+    if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+    {
+        return false;
+    }
+    if (!rx_string_builder_append(
+            out,
+            "[ID].total_ns += rx_profile_diff_ns(__rx_stage_start_##ID, __rx_stage_end_##ID); } while (0)\n"
+            "#else\n"
+            "#define RX_PROFILE_STAGE_BEGIN(ID) do { } while (0)\n"
+            "#define RX_PROFILE_STAGE_END(ID) do { } while (0)\n"
+            "#endif\n\n"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 static bool emit_state_slot(RxStringBuilder *out, const RxStateSlot *slot)
 {
     switch (slot->kind)
@@ -522,6 +630,15 @@ static bool emit_loop_body(
             snprintf(result_name, sizeof(result_name), "__rx_result_%X", inline_counter);
             snprintf(done_label, sizeof(done_label), "__rx_done_%X", inline_counter);
             inline_counter += 1;
+        }
+
+        if (!rx_string_builder_append_format(out, "        RX_PROFILE_STAGE_BEGIN(%d);\n", index))
+        {
+            if (can_inline)
+            {
+                free_inline_function(&function);
+            }
+            return false;
         }
 
         switch (op->kind)
@@ -853,6 +970,15 @@ static bool emit_loop_body(
                 return false;
         }
 
+        if (!rx_string_builder_append_format(out, "        RX_PROFILE_STAGE_END(%d);\n", index))
+        {
+            if (can_inline)
+            {
+                free_inline_function(&function);
+            }
+            return false;
+        }
+
         if (can_inline)
         {
             free_inline_function(&function);
@@ -961,6 +1087,11 @@ bool rx_emit_c_program(
         return false;
     }
 
+    if (!emit_profile_decls(pipeline, out))
+    {
+        return false;
+    }
+
     if (!rx_emit_c_segment_function(pipeline, options, out, diagnostics))
     {
         return false;
@@ -993,6 +1124,95 @@ bool rx_emit_c_program(
                 "        clock_gettime(CLOCK_MONOTONIC, &end);\n"
                 "        total_ns += (int64_t)(end.tv_sec - start.tv_sec) * 1000000000LL + (int64_t)(end.tv_nsec - start.tv_nsec);\n"
                 "    }\n"
+                "#ifdef RX_PLANNER_PROFILE\n"
+                "    for (size_t i = 0; i < sizeof(rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                ") / sizeof(rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                "[0]); ++i) {\n"
+                "        fprintf(stderr, \"PROFILE %s hits=%llu total_ns=%llu avg_ns=%.2f\\n\",\n"
+                "            rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                "[i].name,\n"
+                "            (unsigned long long)rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                "[i].hits,\n"
+                "            (unsigned long long)rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                "[i].total_ns,\n"
+                "            rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                "[i].hits == 0 ? 0.0 : (double)rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                "[i].total_ns / rx_profile_slots_"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append_format(out, "%s", pipeline->pipeline_name != NULL ? pipeline->pipeline_name : "pipeline"))
+        {
+            return false;
+        }
+        if (!rx_string_builder_append(
+                out,
+                "[i].hits);\n"
+                "    }\n"
+                "#endif\n"
                 "    printf(\"{\\\"result\\\": %" PRIdPTR ", \\\"average_ms\\\": %.5f, \\\"runs\\\": %d, \\\"n\\\": %" PRIdPTR "}\\n\", result, (double)total_ns / RUNS / 1e6, RUNS, N);\n"
                 "    return 0;\n"
                 "}\n"))
