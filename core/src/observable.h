@@ -32,8 +32,11 @@ typedef struct {
     ModifierFunction pred;
 } MapCtx;
 typedef struct {
-    void *to
+    void *to;
 } MapToCtx;
+typedef struct {
+    void *items[2];
+} PairValue;
 typedef struct {
     AccumulatorFunction pred;
     void *accum;
@@ -49,7 +52,7 @@ typedef struct {
 typedef struct {
     ComparisonFunction pred;
     void *endat;
-    bool ended
+    bool ended;
 } SkipUntilCtx;
 typedef struct {
     int count;
@@ -96,6 +99,16 @@ typedef struct Query {
     void *ctx;
     QueryKind kind;
 } Query;
+
+static inline void *pair_left(void *value)
+{
+    return ((PairValue *)value)->items[0];
+}
+
+static inline void *pair_right(void *value)
+{
+    return ((PairValue *)value)->items[1];
+}
 
 Observable *create_observable();
 void subscribe(Observable *o, Subscriber subscriber);

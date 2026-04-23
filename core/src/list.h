@@ -3,6 +3,7 @@
 #include <stdbool.h>
 typedef struct List {
     void **data;
+    void *payload_block;
     int front;
     int rear;
     int allocatedsize;

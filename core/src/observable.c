@@ -87,6 +87,14 @@ static void free_replaced_list(List *previous, List *next) {
     }
 }
 
+static int list_active_size(List *list) {
+    int size = list->size;
+    if (size > 0 && isStreamComplete(peek(list))) {
+        --size;
+    }
+    return size;
+}
+
 static bool query_chain_is_streamable(Observable *o) {
     bool seen_reduce = false;
     Observable *current = o;
@@ -707,22 +715,31 @@ Query *buffer(Observable *self, Observable *flusher) {
 static List *mergemap_apply(List *data, void *ctx) {
     List *result = init_list();
     Observable *o = (Observable *)ctx;
+    int outer_size = list_active_size(o->data);
+    int inner_size = list_active_size(data);
+    int total_items = outer_size * inner_size;
 
-    for (int oi = 0; oi < o->data->size; ++oi) {
-        // printf("%d items in o->data, %d items in data\n", o->data->size,
-        // data->size);
-        void *item = list_get(o->data, oi);
-        if (isStreamComplete(item)) {
-            break;
-        }
-        for (int i = 0; i < data->size; ++i) {
-            void *start = list_get(data, i);
-            List *line = init_list();
-            push_back(line, start);
-            push_back(line, item);
-            push_back(result, line);
+    list_reserve(result, total_items);
+    if (total_items == 0) {
+        return result;
+    }
+
+    PairValue *pairs = malloc((size_t)total_items * sizeof(PairValue));
+    result->payload_block = pairs;
+
+    int out = 0;
+
+    for (int oi = 0; oi < outer_size; ++oi) {
+        void *item = o->data->data[oi];
+        for (int i = 0; i < inner_size; ++i) {
+            pairs[out].items[0] = data->data[i];
+            pairs[out].items[1] = item;
+            result->data[out] = &pairs[out];
+            ++out;
         }
     }
+    result->size = out;
+    result->rear = out;
     return result;
 }
 Query *mergeMap(Observable *o) {
@@ -848,12 +865,27 @@ Observable *zip(int count, ...) {
     }
 
     Observable *result = create_observable();
-    for (int i = 0; i < shortest; ++i) {
-        List *zipped = init_list();
-        for (int j = 0; j < count; ++j) {
-            push_back(zipped, list_get(observables[j]->data, i));
+    list_reserve(result->data, shortest);
+
+    if (count == 2 && shortest > 0) {
+        PairValue *pairs = malloc((size_t)shortest * sizeof(PairValue));
+        result->data->payload_block = pairs;
+        for (int i = 0; i < shortest; ++i) {
+            pairs[i].items[0] = observables[0]->data->data[i];
+            pairs[i].items[1] = observables[1]->data->data[i];
+            result->data->data[i] = &pairs[i];
         }
-        push_back(result->data, zipped);
+        result->data->size = shortest;
+        result->data->rear = shortest;
+    } else {
+        for (int i = 0; i < shortest; ++i) {
+            List *zipped = init_list();
+            for (int j = 0; j < count; ++j) {
+                push_back(zipped, list_get(observables[j]->data, i));
+            }
+            push_back(result->data, zipped);
+        }
     }
+    free(observables);
     return result;
 }

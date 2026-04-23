@@ -17,6 +17,7 @@ List *init_list_with_capacity(int capacity) {
     List *result = malloc(sizeof(List));
     result->allocatedsize = normalized_capacity(capacity);
     result->data = malloc(result->allocatedsize * sizeof(void *));
+    result->payload_block = NULL;
     result->front = 0;
     result->rear = 0;
     result->size = 0;
@@ -140,6 +141,7 @@ void resize(List *list) {
 
 void freelist(List *list) {
     uint64_t start = PROFILE_NOW_NS();
+    free(list->payload_block);
     free(list->data);
     free(list);
     PROFILE_INC(freelist_calls);
