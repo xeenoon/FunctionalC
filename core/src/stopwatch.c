@@ -4,13 +4,11 @@
 #include <unistd.h>
 #include "stopwatch.h"
 
-void stopwatch_start(Stopwatch *sw)
-{
+void stopwatch_start(Stopwatch *sw) {
     clock_gettime(CLOCK_MONOTONIC, &sw->start);
 }
 
-long stopwatch_elapsed_ms(Stopwatch *sw)
-{
+long stopwatch_elapsed_ms(Stopwatch *sw) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 

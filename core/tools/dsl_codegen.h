@@ -5,8 +5,7 @@
 
 #include "planner.h"
 
-typedef struct
-{
+typedef struct {
     char output_file[260];
     char binary_file[260];
     char runs_expr[64];

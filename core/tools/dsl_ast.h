@@ -3,33 +3,25 @@
 
 #include <stdbool.h>
 
-typedef enum
-{
-    EXPR_IDENT,
-    EXPR_NUMBER,
-    EXPR_CALL
-} ExprKind;
+typedef enum { EXPR_IDENT, EXPR_NUMBER, EXPR_CALL } ExprKind;
 
 typedef struct Expr Expr;
 
-struct Expr
-{
+struct Expr {
     ExprKind kind;
     char text[64];
     Expr *args[8];
     int arg_count;
 };
 
-typedef struct
-{
+typedef struct {
     char name[64];
     char params[2][32];
     int param_count;
     Expr *body;
 } FnDef;
 
-typedef enum
-{
+typedef enum {
     SOURCE_RANGE,
     SOURCE_OF,
     SOURCE_EMPTY,
@@ -43,8 +35,7 @@ typedef enum
 
 typedef struct SourceAst SourceAst;
 
-struct SourceAst
-{
+struct SourceAst {
     SourceKind kind;
     char values[8][64];
     int value_count;
@@ -52,8 +43,7 @@ struct SourceAst
     int source_count;
 };
 
-typedef enum
-{
+typedef enum {
     OP_MAP,
     OP_FILTER,
     OP_REDUCE,
@@ -75,8 +65,7 @@ typedef enum
     OP_THROTTLE_TIME
 } OperatorKind;
 
-typedef struct
-{
+typedef struct {
     OperatorKind kind;
     char symbol[64];
     char extra[64];
@@ -84,16 +73,14 @@ typedef struct
     bool has_extra;
 } OperatorAst;
 
-typedef struct
-{
+typedef struct {
     SourceAst *source;
     OperatorAst ops[32];
     int op_count;
     char subscriber_target[64];
 } ChainAst;
 
-typedef struct
-{
+typedef struct {
     FnDef functions[64];
     int function_count;
     ChainAst chains[32];

@@ -1,0 +1,42 @@
+{
+    // Editor
+    "editor.formatOnSave": true,
+    "editor.rulers": [80],
+    "prettier.requireConfig": true,
+
+    // Formatting rules
+    "C_Cpp.formatting": "clangFormat",
+    "C_Cpp.clang_format_style": "file",
+
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools"
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools"
+    },
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[jsonc]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+
+    // Python
+    "python.defaultInterpreterPath": "${workspaceFolder}/tests/.venv/bin/python",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.testing.pytestEnabled": true,
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff"
+    },
+    "ruff.configuration": "${workspaceFolder}/tests/pyproject.toml",
+
+    // Ignore dependency folders in workspace tooling.
+    "ts.tsserver.watchOptions": {
+        "excludeDirectories": [
+            "**/node_modules"
+        ]
+    }
+}

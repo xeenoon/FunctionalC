@@ -13,8 +13,7 @@
 
 typedef void (*Action)(void *arg);
 
-typedef struct TimedTask
-{
+typedef struct TimedTask {
     long time_ms; // absolute time (ms since stopwatch start)
     void *ctx;
     Action action;
@@ -27,7 +26,6 @@ static pthread_mutex_t tasks_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t tasks_cond;
 static pthread_t tasks_thread;
 static bool tasks_running = false;
-
 
 static void timespec_from_monotonic_ms(struct timespec *ts, long ms_from_now);
 static bool insert_task_locked(TimedTask *task);

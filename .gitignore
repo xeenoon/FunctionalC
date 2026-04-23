@@ -18,11 +18,26 @@
 generated_*.c
 
 # Generated output directory
-/out/*
-!/out/.gitkeep
+core/out/*
+!core/out/.gitkeep
 
 # Common temp files
 *.tmp
 *.log
 *.bak
 *.orig
+
+# Python stuff
+.venv/
+__pycache__/
+
+# NPM packages
+node_modules/
+
+# Outputted files
+*_O1
+*_O2
+*_O3
+
+# Coding agents
+.codex

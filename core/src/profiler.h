@@ -7,8 +7,7 @@
 #define ENABLE_PROFILER 1
 #endif
 
-typedef struct BenchProfile
-{
+typedef struct BenchProfile {
     uint64_t init_list_calls;
     uint64_t init_list_ns;
     uint64_t resize_calls;
