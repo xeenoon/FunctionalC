@@ -12,7 +12,7 @@ static List *mergemap_apply(List *data, void *ctx);
 Observable *create_observable() {
     Observable *o = malloc(sizeof(Observable));
     o->data = init_list();
-    o->cache = init_list();
+    o->cache = NULL;
     o->pipe = NULL;
     o->subscriber = NULL;
     o->emit_handler = NULL;
@@ -44,9 +44,13 @@ Observable *of(int count, ...) {
         return NULL;
 
     o->data = init_list();
+    o->cache = NULL;
+    o->complete = false;
+    o->ready = false;
     o->pipe = NULL;
     o->subscriber = NULL;
     o->emit_handler = NULL;
+    o->on_subscription = NULL;
 
     va_list args;
     va_start(args, count);
@@ -305,13 +309,16 @@ Observable *range(int min, int max) // Inclusive range
 {
     uint64_t start = PROFILE_NOW_NS();
     Observable *result = create_observable();
-    list_reserve(result->data, max - min + 1);
-    for (int i = min; i < max + 1; ++i) {
-        push_back(result->data, (void *)(long)(i));
+    int count = max - min + 1;
+    list_reserve(result->data, count);
+    for (int i = 0; i < count; ++i) {
+        result->data->data[i] = (void *)(long)(min + i);
     }
+    result->data->size = count;
+    result->data->rear = count;
     PROFILE_INC(range_calls);
     PROFILE_ADD(range_ns, PROFILE_NOW_NS() - start);
-    PROFILE_ADD(range_items, (uint64_t)(max - min + 1));
+    PROFILE_ADD(range_items, (uint64_t)count);
     return result;
 }
 
@@ -773,18 +780,35 @@ static List *mergemap_apply(List *data, void *ctx) {
         return result;
     }
 
-    PairValue *pairs = malloc((size_t)total_items * sizeof(PairValue));
-    result->payload_block = pairs;
-
     int out = 0;
 
-    for (int oi = 0; oi < outer_size; ++oi) {
-        void *item = o->data->data[oi];
-        for (int i = 0; i < inner_size; ++i) {
-            pairs[out].items[0] = data->data[i];
-            pairs[out].items[1] = item;
-            result->data[out] = &pairs[out];
-            ++out;
+    if (data->payload_block != NULL) {
+        NestedPairValue *pairs =
+            malloc((size_t)total_items * sizeof(NestedPairValue));
+        result->payload_block = pairs;
+
+        for (int oi = 0; oi < outer_size; ++oi) {
+            void *item = o->data->data[oi];
+            for (int i = 0; i < inner_size; ++i) {
+                pairs[out].inner = *((PairValue *)data->data[i]);
+                pairs[out].outer.items[0] = &pairs[out].inner;
+                pairs[out].outer.items[1] = item;
+                result->data[out] = &pairs[out].outer;
+                ++out;
+            }
+        }
+    } else {
+        PairValue *pairs = malloc((size_t)total_items * sizeof(PairValue));
+        result->payload_block = pairs;
+
+        for (int oi = 0; oi < outer_size; ++oi) {
+            void *item = o->data->data[oi];
+            for (int i = 0; i < inner_size; ++i) {
+                pairs[out].items[0] = data->data[i];
+                pairs[out].items[1] = item;
+                result->data[out] = &pairs[out];
+                ++out;
+            }
         }
     }
     result->size = out;
@@ -893,6 +917,31 @@ Observable *zip(int count, ...) {
     va_list args;
     va_start(args, count);
 
+    if (count == 2) {
+        Observable *left = va_arg(args, Observable *);
+        Observable *right = va_arg(args, Observable *);
+        va_end(args);
+
+        int left_size = list_active_size(left->data);
+        int right_size = list_active_size(right->data);
+        int shortest = left_size < right_size ? left_size : right_size;
+
+        Observable *result = create_observable();
+        list_reserve(result->data, shortest);
+        if (shortest > 0) {
+            PairValue *pairs = malloc((size_t)shortest * sizeof(PairValue));
+            result->data->payload_block = pairs;
+            for (int i = 0; i < shortest; ++i) {
+                pairs[i].items[0] = left->data->data[i];
+                pairs[i].items[1] = right->data->data[i];
+                result->data->data[i] = &pairs[i];
+            }
+            result->data->size = shortest;
+            result->data->rear = shortest;
+        }
+        return result;
+    }
+
     Observable **observables = malloc(sizeof(Observable *) * count);
     for (int i = 0; i < count; ++i) {
         observables[i] = va_arg(args, Observable *);
@@ -916,17 +965,7 @@ Observable *zip(int count, ...) {
     Observable *result = create_observable();
     list_reserve(result->data, shortest);
 
-    if (count == 2 && shortest > 0) {
-        PairValue *pairs = malloc((size_t)shortest * sizeof(PairValue));
-        result->data->payload_block = pairs;
-        for (int i = 0; i < shortest; ++i) {
-            pairs[i].items[0] = observables[0]->data->data[i];
-            pairs[i].items[1] = observables[1]->data->data[i];
-            result->data->data[i] = &pairs[i];
-        }
-        result->data->size = shortest;
-        result->data->rear = shortest;
-    } else {
+    if (shortest > 0) {
         for (int i = 0; i < shortest; ++i) {
             List *zipped = init_list();
             for (int j = 0; j < count; ++j) {

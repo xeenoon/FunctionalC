@@ -42,6 +42,10 @@ typedef struct {
     void *items[2];
 } PairValue;
 typedef struct {
+    PairValue outer;
+    PairValue inner;
+} NestedPairValue;
+typedef struct {
     AccumulatorFunction pred;
     void *accum;
 } ScanCtx;
