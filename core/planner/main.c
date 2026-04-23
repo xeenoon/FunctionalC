@@ -277,6 +277,7 @@ int main(int argc, char **argv)
     const char *spec_path = NULL;
     const char *output_path = NULL;
     const char *header_path = NULL;
+    const char *helpers_source_path = NULL;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -291,6 +292,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[index], "--header") == 0 && index + 1 < argc)
         {
             header_path = argv[++index];
+        }
+        else if (strcmp(argv[index], "--helpers-source") == 0 && index + 1 < argc)
+        {
+            helpers_source_path = argv[++index];
         }
     }
 
@@ -318,14 +323,45 @@ int main(int argc, char **argv)
 
     RxStringBuilder output;
     rx_string_builder_init(&output);
+    RxStringBuilder helper_source;
+    rx_string_builder_init(&helper_source);
     RxCCodegenOptions options;
     memset(&options, 0, sizeof(options));
     options.emit_main = true;
     options.header_path = header_path;
 
+    if (helpers_source_path != NULL)
+    {
+        FILE *helpers_file = fopen(helpers_source_path, "r");
+        if (helpers_file == NULL)
+        {
+            fprintf(stderr, "failed to read helpers source: %s\n", helpers_source_path);
+            rx_string_builder_reset(&helper_source);
+            rx_string_builder_reset(&output);
+            rx_transpiler_reset(&transpiler);
+            return 1;
+        }
+
+        char buffer[1024];
+        while (fgets(buffer, sizeof(buffer), helpers_file) != NULL)
+        {
+            if (!rx_string_builder_append(&helper_source, buffer))
+            {
+                fclose(helpers_file);
+                rx_string_builder_reset(&helper_source);
+                rx_string_builder_reset(&output);
+                rx_transpiler_reset(&transpiler);
+                return 1;
+            }
+        }
+        fclose(helpers_file);
+        options.helper_source_text = helper_source.data;
+    }
+
     if (!rx_transpiler_emit(&transpiler, &options, &output))
     {
         print_diagnostics(&transpiler.diagnostics);
+        rx_string_builder_reset(&helper_source);
         rx_string_builder_reset(&output);
         rx_transpiler_reset(&transpiler);
         return 1;
@@ -342,6 +378,7 @@ int main(int argc, char **argv)
     fputs(output.data != NULL ? output.data : "", file);
     fclose(file);
 
+    rx_string_builder_reset(&helper_source);
     rx_string_builder_reset(&output);
     rx_transpiler_reset(&transpiler);
     return 0;

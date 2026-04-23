@@ -11,6 +11,7 @@ typedef struct
     bool emit_helpers;
     bool emit_segment_bridge;
     const char *header_path;
+    const char *helper_source_text;
 } RxCCodegenOptions;
 
 bool rx_emit_c_program(

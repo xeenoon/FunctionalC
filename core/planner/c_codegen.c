@@ -1,9 +1,384 @@
 #include "c_codegen.h"
 
 #include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct
+{
+    const char *name;
+    char *return_type;
+    char *parameter_decls[4];
+    char *parameter_names[4];
+    int parameter_count;
+    char *body;
+} RxInlineFunction;
+
+static bool is_ident_start(char ch)
+{
+    return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_';
+}
+
+static bool is_ident_char(char ch)
+{
+    return is_ident_start(ch) || (ch >= '0' && ch <= '9');
+}
+
+static char *copy_trimmed_range(const char *start, const char *end)
+{
+    while (start < end && (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n'))
+    {
+        ++start;
+    }
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n'))
+    {
+        --end;
+    }
+
+    size_t length = (size_t)(end - start);
+    char *result = malloc(length + 1);
+    if (result == NULL)
+    {
+        return NULL;
+    }
+    memcpy(result, start, length);
+    result[length] = '\0';
+    return result;
+}
+
+static void free_inline_function(RxInlineFunction *function)
+{
+    free(function->return_type);
+    for (int index = 0; index < function->parameter_count; ++index)
+    {
+        free(function->parameter_decls[index]);
+        free(function->parameter_names[index]);
+    }
+    free(function->body);
+    memset(function, 0, sizeof(*function));
+}
+
+static bool token_matches_at(const char *cursor, const char *token)
+{
+    size_t length = strlen(token);
+    if (strncmp(cursor, token, length) != 0)
+    {
+        return false;
+    }
+    if (is_ident_char(cursor[-1]))
+    {
+        return false;
+    }
+    return !is_ident_char(cursor[length]);
+}
+
+static bool contains_banned_syntax(const char *body)
+{
+    for (const char *cursor = body; *cursor != '\0'; ++cursor)
+    {
+        if (*cursor == '#')
+        {
+            return true;
+        }
+        if ((cursor == body || !is_ident_char(cursor[-1]))
+            && (token_matches_at(cursor, "goto")
+                || token_matches_at(cursor, "switch")
+                || token_matches_at(cursor, "case")
+                || token_matches_at(cursor, "default")))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *find_function_name(const char *source, const char *name)
+{
+    size_t name_length = strlen(name);
+    for (const char *cursor = source; (cursor = strstr(cursor, name)) != NULL; ++cursor)
+    {
+        if ((cursor == source || !is_ident_char(cursor[-1]))
+            && cursor[name_length] == '(')
+        {
+            return cursor;
+        }
+    }
+    return NULL;
+}
+
+static bool parse_parameters(
+    const char *params_start,
+    const char *params_end,
+    RxInlineFunction *function)
+{
+    const char *cursor = params_start;
+    while (cursor < params_end)
+    {
+        while (cursor < params_end && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ','))
+        {
+            ++cursor;
+        }
+        if (cursor >= params_end)
+        {
+            break;
+        }
+
+        const char *decl_start = cursor;
+        const char *decl_end = cursor;
+        while (decl_end < params_end && *decl_end != ',')
+        {
+            ++decl_end;
+        }
+
+        const char *name_end = decl_end;
+        while (name_end > decl_start && !is_ident_char(name_end[-1]))
+        {
+            --name_end;
+        }
+        const char *name_start = name_end;
+        while (name_start > decl_start && is_ident_char(name_start[-1]))
+        {
+            --name_start;
+        }
+
+        if (function->parameter_count >= 4)
+        {
+            return false;
+        }
+
+        function->parameter_decls[function->parameter_count] = copy_trimmed_range(decl_start, decl_end);
+        function->parameter_names[function->parameter_count] = copy_trimmed_range(name_start, name_end);
+        if (function->parameter_decls[function->parameter_count] == NULL
+            || function->parameter_names[function->parameter_count] == NULL)
+        {
+            return false;
+        }
+        function->parameter_count += 1;
+        cursor = decl_end + 1;
+    }
+
+    return true;
+}
+
+static bool try_extract_inline_function(
+    const char *source_text,
+    const char *name,
+    RxInlineFunction *function)
+{
+    memset(function, 0, sizeof(*function));
+    function->name = name;
+    if (source_text == NULL || name == NULL)
+    {
+        return false;
+    }
+
+    const char *name_pos = find_function_name(source_text, name);
+    if (name_pos == NULL)
+    {
+        return false;
+    }
+
+    const char *return_start = name_pos;
+    while (return_start > source_text && return_start[-1] != '\n' && return_start[-1] != ';' && return_start[-1] != '}')
+    {
+        --return_start;
+    }
+    function->return_type = copy_trimmed_range(return_start, name_pos);
+    if (function->return_type == NULL)
+    {
+        return false;
+    }
+
+    const char *params_start = strchr(name_pos, '(');
+    if (params_start == NULL)
+    {
+        free_inline_function(function);
+        return false;
+    }
+    ++params_start;
+
+    int depth = 1;
+    const char *params_end = params_start;
+    while (*params_end != '\0' && depth > 0)
+    {
+        if (*params_end == '(')
+        {
+            depth += 1;
+        }
+        else if (*params_end == ')')
+        {
+            depth -= 1;
+        }
+        ++params_end;
+    }
+    if (depth != 0)
+    {
+        free_inline_function(function);
+        return false;
+    }
+    --params_end;
+
+    if (!parse_parameters(params_start, params_end, function))
+    {
+        free_inline_function(function);
+        return false;
+    }
+
+    const char *body_start = strchr(params_end, '{');
+    if (body_start == NULL)
+    {
+        free_inline_function(function);
+        return false;
+    }
+    ++body_start;
+
+    depth = 1;
+    const char *body_end = body_start;
+    while (*body_end != '\0' && depth > 0)
+    {
+        if (*body_end == '{')
+        {
+            depth += 1;
+        }
+        else if (*body_end == '}')
+        {
+            depth -= 1;
+        }
+        ++body_end;
+    }
+    if (depth != 0)
+    {
+        free_inline_function(function);
+        return false;
+    }
+    --body_end;
+
+    function->body = copy_trimmed_range(body_start, body_end);
+    if (function->body == NULL || contains_banned_syntax(function->body))
+    {
+        free_inline_function(function);
+        return false;
+    }
+
+    return true;
+}
+
+static bool emit_rewritten_body(
+    RxStringBuilder *out,
+    const char *body,
+    const char *result_name,
+    const char *done_label)
+{
+    const char *cursor = body;
+    while (*cursor != '\0')
+    {
+        if ((cursor == body || !is_ident_char(cursor[-1])) && token_matches_at(cursor, "return"))
+        {
+            cursor += strlen("return");
+            while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')
+            {
+                ++cursor;
+            }
+            const char *expr_start = cursor;
+            int paren_depth = 0;
+            int brace_depth = 0;
+            while (*cursor != '\0')
+            {
+                if (*cursor == '(')
+                {
+                    paren_depth += 1;
+                }
+                else if (*cursor == ')')
+                {
+                    paren_depth -= 1;
+                }
+                else if (*cursor == '{')
+                {
+                    brace_depth += 1;
+                }
+                else if (*cursor == '}')
+                {
+                    brace_depth -= 1;
+                }
+                else if (*cursor == ';' && paren_depth == 0 && brace_depth == 0)
+                {
+                    break;
+                }
+                ++cursor;
+            }
+            if (*cursor != ';')
+            {
+                return false;
+            }
+
+            char *expr = copy_trimmed_range(expr_start, cursor);
+            if (expr == NULL)
+            {
+                return false;
+            }
+            bool ok = rx_string_builder_append_format(
+                out,
+                "%s = %s; goto %s;",
+                result_name,
+                expr,
+                done_label);
+            free(expr);
+            if (!ok)
+            {
+                return false;
+            }
+            ++cursor;
+            continue;
+        }
+
+        char chunk[2] = { *cursor, '\0' };
+        if (!rx_string_builder_append(out, chunk))
+        {
+            return false;
+        }
+        ++cursor;
+    }
+    return true;
+}
+
+static bool emit_inline_call_block(
+    RxStringBuilder *out,
+    const RxInlineFunction *function,
+    const char *const *arguments,
+    int argument_count,
+    const char *result_name,
+    const char *done_label)
+{
+    if (!rx_string_builder_append(out, "        {\n"))
+    {
+        return false;
+    }
+    for (int index = 0; index < function->parameter_count && index < argument_count; ++index)
+    {
+        if (!rx_string_builder_append_format(
+                out,
+                "            %s = %s;\n",
+                function->parameter_decls[index],
+                arguments[index]))
+        {
+            return false;
+        }
+    }
+    if (!emit_rewritten_body(out, function->body, result_name, done_label))
+    {
+        return false;
+    }
+    if (!rx_string_builder_append_format(out, "\n%s:;\n        }\n", done_label))
+    {
+        return false;
+    }
+    return true;
+}
 
 static bool emit_function_declarations(
     const RxLoweredPipeline *pipeline,
+    const RxCCodegenOptions *options,
     RxStringBuilder *out)
 {
     for (int index = 0; index < pipeline->op_count; ++index)
@@ -15,6 +390,14 @@ static bool emit_function_declarations(
         }
 
         const char *name = op->stage->primary_argument.as.function_name;
+        RxInlineFunction function;
+        bool inlined = try_extract_inline_function(options != NULL ? options->helper_source_text : NULL, name, &function);
+        if (inlined)
+        {
+            free_inline_function(&function);
+            continue;
+        }
+
         switch (op->kind)
         {
             case RX_OP_CALL_PAIR_MAP:
@@ -90,8 +473,10 @@ static bool emit_state_slot(RxStringBuilder *out, const RxStateSlot *slot)
 
 static bool emit_loop_body(
     const RxLoweredPipeline *pipeline,
+    const RxCCodegenOptions *options,
     RxStringBuilder *out)
 {
+    unsigned inline_counter = 0;
     if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_RANGE)
     {
         if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n"))
@@ -128,43 +513,117 @@ static bool emit_loop_body(
         const char *fn = stage != NULL && stage->primary_argument.kind == RX_BINDING_FUNCTION_NAME
             ? stage->primary_argument.as.function_name
             : NULL;
+        RxInlineFunction function;
+        bool can_inline = fn != NULL && try_extract_inline_function(options != NULL ? options->helper_source_text : NULL, fn, &function);
+        char result_name[32];
+        char done_label[32];
+        if (can_inline)
+        {
+            snprintf(result_name, sizeof(result_name), "__rx_result_%X", inline_counter);
+            snprintf(done_label, sizeof(done_label), "__rx_done_%X", inline_counter);
+            inline_counter += 1;
+        }
 
         switch (op->kind)
         {
             case RX_OP_CALL_PAIR_MAP:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        value = (intptr_t)%s((void *)(intptr_t)left, (void *)(intptr_t)right);\n",
-                        fn))
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)left", "(void *)(intptr_t)right" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 2, result_name, done_label)
+                        || !rx_string_builder_append_format(out, "        value = (intptr_t)%s;\n", result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        value = (intptr_t)%s((void *)(intptr_t)left, (void *)(intptr_t)right);\n",
+                             fn))
                 {
                     return false;
                 }
                 break;
+            }
             case RX_OP_CALL_MAP:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        value = (intptr_t)%s((void *)(intptr_t)value);\n",
-                        fn))
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)value" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
+                        || !rx_string_builder_append_format(out, "        value = (intptr_t)%s;\n", result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        value = (intptr_t)%s((void *)(intptr_t)value);\n",
+                             fn))
                 {
                     return false;
                 }
                 break;
+            }
             case RX_OP_CALL_FILTER:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        if (!%s((void *)(intptr_t)value)) { continue; }\n",
-                        fn))
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)value" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = false;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
+                        || !rx_string_builder_append_format(out, "        if (!%s) { continue; }\n", result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        if (!%s((void *)(intptr_t)value)) { continue; }\n",
+                             fn))
                 {
                     return false;
                 }
                 break;
+            }
             case RX_OP_CALL_SCAN:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s = (intptr_t)%s((void *)(intptr_t)%s, (void *)(intptr_t)value);\n",
-                        pipeline->state_slots[op->state_slot_index].name,
-                        fn,
-                        pipeline->state_slots[op->state_slot_index].name))
+            {
+                if (can_inline)
+                {
+                    char arg0[96];
+                    snprintf(
+                        arg0,
+                        sizeof(arg0),
+                        "(void *)(intptr_t)%s",
+                        pipeline->state_slots[op->state_slot_index].name);
+                    const char *args[] = {
+                        arg0,
+                        "(void *)(intptr_t)value",
+                    };
+                    if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 2, result_name, done_label)
+                        || !rx_string_builder_append_format(
+                               out,
+                               "        %s = (intptr_t)%s;\n",
+                               pipeline->state_slots[op->state_slot_index].name,
+                               result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        %s = (intptr_t)%s((void *)(intptr_t)%s, (void *)(intptr_t)value);\n",
+                             pipeline->state_slots[op->state_slot_index].name,
+                             fn,
+                             pipeline->state_slots[op->state_slot_index].name))
                 {
                     return false;
                 }
@@ -173,24 +632,53 @@ static bool emit_loop_body(
                         "        value = %s;\n",
                         pipeline->state_slots[op->state_slot_index].name))
                 {
+                    free_inline_function(&function);
                     return false;
                 }
                 break;
+            }
             case RX_OP_CALL_REDUCE:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        %s = (intptr_t)%s((void *)(intptr_t)%s, (void *)(intptr_t)value);\n",
-                        pipeline->state_slots[op->state_slot_index].name,
-                        fn,
-                        pipeline->state_slots[op->state_slot_index].name))
+            {
+                if (can_inline)
+                {
+                    char arg0[96];
+                    snprintf(
+                        arg0,
+                        sizeof(arg0),
+                        "(void *)(intptr_t)%s",
+                        pipeline->state_slots[op->state_slot_index].name);
+                    const char *args[] = {
+                        arg0,
+                        "(void *)(intptr_t)value",
+                    };
+                    if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 2, result_name, done_label)
+                        || !rx_string_builder_append_format(
+                               out,
+                               "        %s = (intptr_t)%s;\n",
+                               pipeline->state_slots[op->state_slot_index].name,
+                               result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        %s = (intptr_t)%s((void *)(intptr_t)%s, (void *)(intptr_t)value);\n",
+                             pipeline->state_slots[op->state_slot_index].name,
+                             fn,
+                             pipeline->state_slots[op->state_slot_index].name))
                 {
                     return false;
                 }
                 if (!rx_string_builder_append(out, "        continue;\n"))
                 {
+                    free_inline_function(&function);
                     return false;
                 }
                 break;
+            }
             case RX_OP_CALL_MAP_TO:
                 if (!rx_string_builder_append_format(
                         out,
@@ -229,20 +717,49 @@ static bool emit_loop_body(
                 }
                 break;
             case RX_OP_APPLY_TAKE_WHILE:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        if (!%s((void *)(intptr_t)value)) { break; }\n",
-                        fn))
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)value" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = false;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
+                        || !rx_string_builder_append_format(out, "        if (!%s) { break; }\n", result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        if (!%s((void *)(intptr_t)value)) { break; }\n",
+                             fn))
                 {
                     return false;
                 }
                 break;
+            }
             case RX_OP_APPLY_SKIP_WHILE:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        if (!%s && %s((void *)(intptr_t)value)) { continue; }\n",
-                        pipeline->state_slots[op->state_slot_index].name,
-                        fn))
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)value" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = false;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
+                        || !rx_string_builder_append_format(
+                               out,
+                               "        if (!%s && %s) { continue; }\n",
+                               pipeline->state_slots[op->state_slot_index].name,
+                               result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        if (!%s && %s((void *)(intptr_t)value)) { continue; }\n",
+                             pipeline->state_slots[op->state_slot_index].name,
+                             fn))
                 {
                     return false;
                 }
@@ -251,15 +768,33 @@ static bool emit_loop_body(
                         "        %s = true;\n",
                         pipeline->state_slots[op->state_slot_index].name))
                 {
+                    free_inline_function(&function);
                     return false;
                 }
                 break;
+            }
             case RX_OP_APPLY_DISTINCT_UNTIL_CHANGED:
-                if (!rx_string_builder_append_format(
-                        out,
-                        "        intptr_t key_%d = (intptr_t)%s((void *)(intptr_t)value);\n",
-                        index,
-                        fn))
+            {
+                if (can_inline)
+                {
+                    const char *args[] = { "(void *)(intptr_t)value" };
+                    if (!rx_string_builder_append_format(out, "        %s %s = 0;\n", function.return_type, result_name)
+                        || !emit_inline_call_block(out, &function, args, 1, result_name, done_label)
+                        || !rx_string_builder_append_format(
+                               out,
+                               "        intptr_t key_%d = (intptr_t)%s;\n",
+                               index,
+                               result_name))
+                    {
+                        free_inline_function(&function);
+                        return false;
+                    }
+                }
+                else if (!rx_string_builder_append_format(
+                             out,
+                             "        intptr_t key_%d = (intptr_t)%s((void *)(intptr_t)value);\n",
+                             index,
+                             fn))
                 {
                     return false;
                 }
@@ -285,9 +820,11 @@ static bool emit_loop_body(
                         "        %s = true;\n",
                         pipeline->state_slots[op->aux_state_slot_index].name))
                 {
+                    free_inline_function(&function);
                     return false;
                 }
                 break;
+            }
             case RX_OP_APPLY_LAST:
                 if (!rx_string_builder_append_format(
                         out,
@@ -307,11 +844,18 @@ static bool emit_loop_body(
             case RX_OP_APPLY_FIRST:
                 if (!rx_string_builder_append(out, "        return value;\n"))
                 {
+                    free_inline_function(&function);
                     return false;
                 }
                 break;
             default:
+                free_inline_function(&function);
                 return false;
+        }
+
+        if (can_inline)
+        {
+            free_inline_function(&function);
         }
     }
 
@@ -343,7 +887,7 @@ bool rx_emit_c_segment_function(
         }
     }
 
-    if (!emit_loop_body(pipeline, out))
+    if (!emit_loop_body(pipeline, options, out))
     {
         return false;
     }
@@ -412,7 +956,7 @@ bool rx_emit_c_program(
             return false;
         }
     }
-    else if (!emit_function_declarations(pipeline, out))
+    else if (!emit_function_declarations(pipeline, options, out))
     {
         return false;
     }

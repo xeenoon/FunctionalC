@@ -260,6 +260,8 @@ def run_planner_c(planner_codegen_binary: Path, scenario_artifacts):
                     str(artifacts['planner_c']),
                     '--header',
                     artifacts['planner_helper_h'].name,
+                    '--helpers-source',
+                    artifacts['planner_helper_c'].name,
                 ],
                 cwd=artifacts['dir'],
                 check=True,
