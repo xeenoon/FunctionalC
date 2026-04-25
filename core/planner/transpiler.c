@@ -40,6 +40,7 @@ void rx_transpiler_init(
 {
     memset(transpiler, 0, sizeof(*transpiler));
     transpiler->registry = registry != NULL ? registry : rx_default_function_registry();
+    rx_planner_ir_init(&transpiler->planner_ir);
     rx_diagnostic_bag_init(&transpiler->diagnostics);
 }
 
@@ -54,6 +55,7 @@ void rx_transpiler_reset(RxTranspiler *transpiler)
 
     free_execution_plan(&transpiler->plan);
     free_lowered_program(&transpiler->lowered);
+    rx_planner_ir_reset(&transpiler->planner_ir);
     free(transpiler->compiled_segments);
     transpiler->compiled_segments = NULL;
     transpiler->compiled_segment_count = 0;
@@ -79,7 +81,9 @@ bool rx_transpiler_emit(
     const RxCCodegenOptions *options,
     RxStringBuilder *out)
 {
-    return rx_emit_c_program(&transpiler->lowered, options, out, &transpiler->diagnostics);
+    return rx_build_planner_ir(&transpiler->lowered, &transpiler->planner_ir, &transpiler->diagnostics)
+        && rx_validate_planner_ir(&transpiler->planner_ir, &transpiler->diagnostics)
+        && rx_emit_c_program(&transpiler->planner_ir, options, out, &transpiler->diagnostics);
 }
 
 bool rx_transpiler_emit_segment(
@@ -97,8 +101,13 @@ bool rx_transpiler_emit_segment(
     {
         return false;
     }
+    if (!rx_build_planner_ir(&transpiler->lowered, &transpiler->planner_ir, &transpiler->diagnostics)
+        || !rx_validate_planner_ir(&transpiler->planner_ir, &transpiler->diagnostics))
+    {
+        return false;
+    }
     return rx_emit_c_segment_function(
-        &transpiler->lowered.pipelines[pipeline_index],
+        &transpiler->planner_ir.pipelines[pipeline_index],
         options,
         out,
         &transpiler->diagnostics);

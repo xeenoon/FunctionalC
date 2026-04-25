@@ -1,0 +1,9 @@
+pipeline edu_complex_planner
+source external_buffer
+mapInto enrich_record_into planner_enriched_scratch
+scanMut update_database_state_mut planner_state
+mapInto build_school_snapshot_into planner_snapshot_scratch
+filter snapshot_is_relevant
+distinctUntilChanged snapshot_signature
+skipWhile snapshot_is_cold
+reduceMut accumulate_digest_mut planner_digest

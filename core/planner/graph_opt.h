@@ -4,7 +4,7 @@
 #include "c_codegen.h"
 
 bool rx_try_emit_graph_optimized_loop_body(
-    const RxLoweredPipeline *pipeline,
+    const RxPlannerIrPipeline *pipeline,
     const RxCCodegenOptions *options,
     RxStringBuilder *out);
 

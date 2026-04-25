@@ -66,6 +66,20 @@ static RxLiteral literal_int(int value)
     return literal;
 }
 
+static RxArgumentType state_slot_value_type(const RxPlannedStage *stage)
+{
+    if (stage == NULL)
+    {
+        return RX_ARG_INT;
+    }
+    if (stage->secondary_argument.kind == RX_BINDING_LITERAL
+        && stage->secondary_argument.value_type == RX_ARG_VOID_PTR)
+    {
+        return RX_ARG_VOID_PTR;
+    }
+    return RX_ARG_INT;
+}
+
 bool rx_lower_pipeline_segment(
     const RxPlannedPipeline *pipeline,
     const RxPipelineSegment *segment,
@@ -83,7 +97,7 @@ bool rx_lower_pipeline_segment(
         append_diag(
             diagnostics,
             RX_DIAG_UNSUPPORTED_SOURCE,
-            "Lowering currently only supports range(), zip_range(), and zip_merge_map_range() sources",
+            "Lowering currently only supports range(), synthetic_records(), zip_range(), and zip_merge_map_range() sources",
             NULL,
             0,
             -1);
@@ -93,6 +107,42 @@ bool rx_lower_pipeline_segment(
     if (strcmp(pipeline->source.signature->name, "range") == 0)
     {
         lowered->source_kind = RX_LOOP_SOURCE_RANGE;
+    }
+    else if (strcmp(pipeline->source.signature->name, "synthetic_records") == 0)
+    {
+        lowered->source_kind = RX_LOOP_SOURCE_SYNTHETIC_RECORDS;
+        if (pipeline->source.arguments[0].kind == RX_BINDING_LITERAL
+            && pipeline->source.arguments[0].as.literal.kind == RX_LITERAL_INT)
+        {
+            lowered->source_count = pipeline->source.arguments[0].as.literal.as.int_value;
+        }
+    }
+    else if (strcmp(pipeline->source.signature->name, "external_buffer") == 0)
+    {
+        lowered->source_kind = RX_LOOP_SOURCE_EXTERNAL_BUFFER;
+    }
+    else if (strcmp(pipeline->source.signature->name, "external_window") == 0)
+    {
+        lowered->source_kind = RX_LOOP_SOURCE_EXTERNAL_WINDOW;
+        if (pipeline->source.arguments[0].kind == RX_BINDING_LITERAL
+            && pipeline->source.arguments[0].as.literal.kind == RX_LITERAL_INT)
+        {
+            lowered->source_inner_n = pipeline->source.arguments[0].as.literal.as.int_value;
+        }
+    }
+    else if (strcmp(pipeline->source.signature->name, "zip") == 0)
+    {
+        lowered->source_kind = RX_LOOP_SOURCE_ZIP_SYNTHETIC_RECORDS;
+        if (pipeline->source.arguments[1].kind == RX_BINDING_LITERAL
+            && pipeline->source.arguments[1].as.literal.kind == RX_LITERAL_INT)
+        {
+            lowered->source_count = pipeline->source.arguments[1].as.literal.as.int_value;
+        }
+        if (pipeline->source.arguments[2].kind == RX_BINDING_LITERAL
+            && pipeline->source.arguments[2].as.literal.kind == RX_LITERAL_INT)
+        {
+            lowered->source_inner_n = pipeline->source.arguments[2].as.literal.as.int_value;
+        }
     }
     else if (strcmp(pipeline->source.signature->name, "zip_range") == 0)
     {
@@ -112,7 +162,7 @@ bool rx_lower_pipeline_segment(
         append_diag(
             diagnostics,
             RX_DIAG_UNSUPPORTED_SOURCE,
-            "Lowering currently only supports range(), zip_range(), and zip_merge_map_range() sources",
+            "Lowering currently only supports range(), synthetic_records(), zip_range(), and zip_merge_map_range() sources",
             pipeline->source.signature->name,
             0,
             -1);
@@ -139,6 +189,9 @@ bool rx_lower_pipeline_segment(
             case RX_STAGE_MAP:
                 op.kind = RX_OP_CALL_MAP;
                 break;
+            case RX_STAGE_MAP_INTO:
+                op.kind = RX_OP_CALL_MAP_INTO;
+                break;
             case RX_STAGE_FILTER:
                 op.kind = RX_OP_CALL_FILTER;
                 break;
@@ -162,7 +215,22 @@ bool rx_lower_pipeline_segment(
                     : literal_int(0);
                 if (!append_state_slot(
                         lowered,
-                        (RxStateSlot){ RX_STATE_SCAN_ACCUM, "scan_accum", RX_ARG_INT, initial },
+                        (RxStateSlot){ RX_STATE_SCAN_ACCUM, "scan_accum", state_slot_value_type(stage), initial },
+                        &op.state_slot_index))
+                {
+                    return false;
+                }
+                break;
+            }
+            case RX_STAGE_SCAN_MUT:
+            {
+                op.kind = RX_OP_CALL_SCAN_MUT;
+                RxLiteral initial = stage->secondary_argument.kind == RX_BINDING_LITERAL
+                    ? stage->secondary_argument.as.literal
+                    : literal_int(0);
+                if (!append_state_slot(
+                        lowered,
+                        (RxStateSlot){ RX_STATE_SCAN_ACCUM, "scan_accum", state_slot_value_type(stage), initial },
                         &op.state_slot_index))
                 {
                     return false;
@@ -177,7 +245,22 @@ bool rx_lower_pipeline_segment(
                     : literal_int(0);
                 if (!append_state_slot(
                         lowered,
-                        (RxStateSlot){ RX_STATE_REDUCE_ACCUM, "reduce_accum", RX_ARG_INT, initial },
+                        (RxStateSlot){ RX_STATE_REDUCE_ACCUM, "reduce_accum", state_slot_value_type(stage), initial },
+                        &op.state_slot_index))
+                {
+                    return false;
+                }
+                break;
+            }
+            case RX_STAGE_REDUCE_MUT:
+            {
+                op.kind = RX_OP_CALL_REDUCE_MUT;
+                RxLiteral initial = stage->secondary_argument.kind == RX_BINDING_LITERAL
+                    ? stage->secondary_argument.as.literal
+                    : literal_int(0);
+                if (!append_state_slot(
+                        lowered,
+                        (RxStateSlot){ RX_STATE_REDUCE_ACCUM, "reduce_accum", state_slot_value_type(stage), initial },
                         &op.state_slot_index))
                 {
                     return false;

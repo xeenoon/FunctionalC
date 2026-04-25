@@ -14,8 +14,15 @@ from models import BenchmarkResult
 ROOT_DIR = Path(__file__).parent.parent
 BENCH_DIR = ROOT_DIR / 'benchmarks'
 OUT_DIR = ROOT_DIR / 'out' / 'benchmarks'
-ALL_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'planner_c', 'dsl_c', 'typescript')
-C_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'planner_c', 'dsl_c')
+ALL_BENCHMARK_BACKENDS = (
+    'raw_c',
+    'library_c',
+    'planner_c',
+    'planner_graph_c',
+    'dsl_c',
+    'typescript',
+)
+C_BENCHMARK_BACKENDS = ('raw_c', 'library_c', 'planner_c', 'planner_graph_c', 'dsl_c')
 
 
 def resolve_command(command: str) -> str:
@@ -60,7 +67,7 @@ def pytest_addoption(parser):
     parser.addoption(
         '--c-only',
         action='store_true',
-        help='Run only C backends (raw_c, library_c, planner_c, dsl_c) and skip TypeScript.',
+        help='Run only C backends (raw_c, library_c, planner_c, planner_graph_c, dsl_c) and skip TypeScript.',
     )
 
 
@@ -142,7 +149,10 @@ def planner_codegen_binary(benchmark_workspace: Path) -> Path:
             'core/planner/simplify.c',
             'core/planner/lower.c',
             'core/planner/graph_opt.c',
-            'core/planner/c_codegen.c',
+            'core/planner/planner_ir.c',
+            'core/planner/astgen.c',
+            'core/planner/c_model.c',
+            'core/planner/c_render.c',
             'core/planner/transpiler.c',
             'core/planner/compiled_segment.c',
             '-o',
@@ -284,6 +294,64 @@ def run_planner_c(planner_codegen_binary: Path, scenario_artifacts):
                 capture_output=True,
             )
             cache[scenario.name] = artifacts['planner_binary']
+
+        stdout = subprocess.run(
+            [str(cache[scenario.name]), str(scenario.n), str(scenario.runs)],
+            cwd=ROOT_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return BenchmarkResult.parse_json(stdout)
+
+    return _run
+
+
+@pytest.fixture(scope='session')
+def run_planner_graph_c(planner_codegen_binary: Path, scenario_artifacts):
+    cache: dict[str, Path] = {}
+
+    def _run(scenario: BenchmarkScenario) -> BenchmarkResult | None:
+        artifacts = scenario_artifacts(scenario)
+        if not artifacts['planner_spec'].exists():
+            return None
+
+        if scenario.name not in cache:
+            planner_graph_c = artifacts['dir'] / f'{scenario.name}_planner_graph_generated.c'
+            planner_graph_binary = artifacts['dir'] / f'{scenario.name}_planner_graph'
+            subprocess.run(
+                [
+                    str(planner_codegen_binary),
+                    '--spec',
+                    str(artifacts['planner_spec']),
+                    '--output',
+                    str(planner_graph_c),
+                    '--header',
+                    artifacts['planner_helper_h'].name,
+                    '--helpers-source',
+                    artifacts['planner_helper_c'].name,
+                    '--graph-opt',
+                ],
+                cwd=artifacts['dir'],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    resolve_command('gcc'),
+                    '-O3',
+                    '-I.',
+                    str(planner_graph_c),
+                    str(artifacts['planner_helper_c']),
+                    '-o',
+                    str(planner_graph_binary),
+                ],
+                cwd=artifacts['dir'],
+                check=True,
+                capture_output=True,
+            )
+            cache[scenario.name] = resolve_binary_path(planner_graph_binary)
 
         stdout = subprocess.run(
             [str(cache[scenario.name]), str(scenario.n), str(scenario.runs)],

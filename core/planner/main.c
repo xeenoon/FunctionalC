@@ -66,6 +66,28 @@ static void set_literal_argument(RxBinding *binding, int value)
     binding->as.literal.as.int_value = value;
 }
 
+static bool set_symbol_argument(RxBinding *binding, const char *name)
+{
+    char *copy = rx_strdup_local(name);
+    if (copy == NULL)
+    {
+        return false;
+    }
+    binding->kind = RX_BINDING_LITERAL;
+    binding->value_type = RX_ARG_VOID_PTR;
+    binding->as.literal.kind = RX_LITERAL_SYMBOL;
+    binding->as.literal.as.symbol_name = copy;
+    return true;
+}
+
+static void set_source_count_argument(RxBinding *binding, int value)
+{
+    binding->kind = RX_BINDING_LITERAL;
+    binding->value_type = RX_ARG_INT;
+    binding->as.literal.kind = RX_LITERAL_INT;
+    binding->as.literal.as.int_value = value;
+}
+
 static bool set_function_argument(RxBinding *binding, const char *name)
 {
     binding->kind = RX_BINDING_FUNCTION_NAME;
@@ -163,6 +185,31 @@ static bool parse_spec(
                 pipeline->source.arguments[1].value_type = RX_ARG_INT;
                 pipeline->source.arguments[1].as.runtime_symbol = "N";
             }
+            else if (strcmp(source_name, "synthetic_records") == 0)
+            {
+                int count = 0;
+                char *count_text = strtok(NULL, " \t");
+                if (count_text == NULL || !parse_int_literal(count_text, &count))
+                {
+                    fclose(file);
+                    return false;
+                }
+                set_literal_argument(&pipeline->source.arguments[0], count);
+            }
+            else if (strcmp(source_name, "external_buffer") == 0)
+            {
+            }
+            else if (strcmp(source_name, "external_window") == 0)
+            {
+                int width = 0;
+                char *width_text = strtok(NULL, " \t");
+                if (width_text == NULL || !parse_int_literal(width_text, &width))
+                {
+                    fclose(file);
+                    return false;
+                }
+                set_literal_argument(&pipeline->source.arguments[0], width);
+            }
             else if (strcmp(source_name, "zip_range") == 0)
             {
                 set_literal_argument(&pipeline->source.arguments[0], 2);
@@ -177,6 +224,28 @@ static bool parse_spec(
                     return false;
                 }
                 set_literal_argument(&pipeline->source.arguments[0], inner_n);
+            }
+            else if (strcmp(source_name, "zip") == 0)
+            {
+                int left_count = 0;
+                int right_count = 0;
+                char *left_source = strtok(NULL, " \t");
+                char *left_count_text = strtok(NULL, " \t");
+                char *right_source = strtok(NULL, " \t");
+                char *right_count_text = strtok(NULL, " \t");
+                if (left_source == NULL || left_count_text == NULL
+                    || right_source == NULL || right_count_text == NULL
+                    || strcmp(left_source, "synthetic_records") != 0
+                    || strcmp(right_source, "synthetic_records") != 0
+                    || !parse_int_literal(left_count_text, &left_count)
+                    || !parse_int_literal(right_count_text, &right_count))
+                {
+                    fclose(file);
+                    return false;
+                }
+                set_literal_argument(&pipeline->source.arguments[0], 2);
+                set_source_count_argument(&pipeline->source.arguments[1], left_count);
+                set_source_count_argument(&pipeline->source.arguments[2], right_count);
             }
             continue;
         }
@@ -194,6 +263,7 @@ static bool parse_spec(
         char *arg2 = strtok(NULL, " \t");
 
         if (strcmp(token, "map") == 0
+            || strcmp(token, "mapInto") == 0
             || strcmp(token, "pairMap") == 0
             || strcmp(token, "tripleMap") == 0
             || strcmp(token, "filter") == 0
@@ -207,17 +277,41 @@ static bool parse_spec(
                 fclose(file);
                 return false;
             }
+            if (strcmp(token, "mapInto") == 0)
+            {
+                if (arg2 == NULL || !set_symbol_argument(&stage.arguments[1], arg2))
+                {
+                    fclose(file);
+                    return false;
+                }
+            }
         }
         else if (strcmp(token, "scanfrom") == 0)
         {
             int initial = 0;
-            if (arg1 == NULL || arg2 == NULL || !set_function_argument(&stage.arguments[0], arg1)
-                || !parse_int_literal(arg2, &initial))
+            if (arg1 == NULL || arg2 == NULL || !set_function_argument(&stage.arguments[0], arg1))
             {
                 fclose(file);
                 return false;
             }
-            set_literal_argument(&stage.arguments[1], initial);
+            if (parse_int_literal(arg2, &initial))
+            {
+                set_literal_argument(&stage.arguments[1], initial);
+            }
+            else if (!set_symbol_argument(&stage.arguments[1], arg2))
+            {
+                fclose(file);
+                return false;
+            }
+        }
+        else if (strcmp(token, "scanMut") == 0 || strcmp(token, "reduceMut") == 0)
+        {
+            if (arg1 == NULL || arg2 == NULL || !set_function_argument(&stage.arguments[0], arg1)
+                || !set_symbol_argument(&stage.arguments[1], arg2))
+            {
+                fclose(file);
+                return false;
+            }
         }
         else if (strcmp(token, "reduce") == 0)
         {
@@ -229,12 +323,15 @@ static bool parse_spec(
             if (arg2 != NULL)
             {
                 int initial = 0;
-                if (!parse_int_literal(arg2, &initial))
+                if (parse_int_literal(arg2, &initial))
+                {
+                    set_literal_argument(&stage.arguments[1], initial);
+                }
+                else if (!set_symbol_argument(&stage.arguments[1], arg2))
                 {
                     fclose(file);
                     return false;
                 }
-                set_literal_argument(&stage.arguments[1], initial);
             }
         }
         else if (strcmp(token, "take") == 0 || strcmp(token, "skip") == 0)
@@ -291,6 +388,7 @@ int main(int argc, char **argv)
     const char *header_path = NULL;
     const char *helpers_source_path = NULL;
     bool enable_graph_optimizations = false;
+    bool emit_main = true;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -313,6 +411,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[index], "--graph-opt") == 0)
         {
             enable_graph_optimizations = true;
+        }
+        else if (strcmp(argv[index], "--no-main") == 0)
+        {
+            emit_main = false;
         }
     }
 
@@ -344,7 +446,7 @@ int main(int argc, char **argv)
     rx_string_builder_init(&helper_source);
     RxCCodegenOptions options;
     memset(&options, 0, sizeof(options));
-    options.emit_main = true;
+    options.emit_main = emit_main;
     options.enable_graph_optimizations = enable_graph_optimizations;
     options.header_path = header_path;
 

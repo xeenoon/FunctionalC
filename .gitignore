@@ -17,6 +17,13 @@
 *.exe
 generated_*.c
 
+# Benchmark artifacts and datasets
+benchmarks/*.exe
+benchmarks/**/*.exe
+benchmarks/data/
+benchmarks/_wt_0fb6070/
+benchmarks/_wt_0fb6070/benchmarks/data/
+
 # Generated output directory
 core/out/*
 !core/out/.gitkeep

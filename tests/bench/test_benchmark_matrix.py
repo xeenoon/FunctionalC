@@ -10,6 +10,7 @@ def test_benchmark_matrix(
     run_raw_c,
     run_library_c,
     run_planner_c,
+    run_planner_graph_c,
     run_dsl,
     run_typescript,
 ):
@@ -57,6 +58,19 @@ def test_benchmark_matrix(
     else:
         print('  planner C:  unsupported', flush=True)
 
+    planner_graph_c = (
+        run_planner_graph_c(scenario)
+        if 'planner_c' in scenario.backends and 'planner_graph_c' in selected_backends
+        else None
+    )
+    if planner_graph_c is not None:
+        print(
+            f'  planner G:  result={planner_graph_c.result}  average_ms={planner_graph_c.average_ms:.5f}',
+            flush=True,
+        )
+    else:
+        print('  planner G:  unsupported', flush=True)
+
     dsl_c = (
         run_dsl(scenario)
         if 'dsl_c' in scenario.backends and 'dsl_c' in selected_backends
@@ -92,6 +106,8 @@ def test_benchmark_matrix(
         assert library_c.result == expected
     if planner_c is not None:
         assert planner_c.result == expected
+    if planner_graph_c is not None:
+        assert planner_graph_c.result == expected
     if dsl_c is not None:
         assert dsl_c.result == expected
 

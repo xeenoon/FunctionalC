@@ -6,6 +6,7 @@
 #include "diagnostics.h"
 #include "function_registry.h"
 #include "loop_ir.h"
+#include "planner_ir.h"
 #include "pipeline_ir.h"
 #include "pipeline_plan.h"
 
@@ -15,6 +16,7 @@ typedef struct
     RxProgramIr program;
     RxExecutionPlan plan;
     RxLoweredProgram lowered;
+    RxPlannerIrProgram planner_ir;
     RxCompiledSegmentBinding *compiled_segments;
     int compiled_segment_count;
     RxDiagnosticBag diagnostics;

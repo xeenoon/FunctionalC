@@ -622,6 +622,20 @@ static bool rx_expr_is_named_var(const RxExpr *expr, const char *name)
         && strcmp(expr->name, name) == 0;
 }
 
+static bool rx_expr_uses_named_var(const RxExpr *expr, const char *name)
+{
+    if (expr == NULL)
+    {
+        return false;
+    }
+    if (rx_expr_is_named_var(expr, name))
+    {
+        return true;
+    }
+    return rx_expr_uses_named_var(expr->left, name)
+        || rx_expr_uses_named_var(expr->right, name);
+}
+
 static bool rx_materialize_current_expr(RxStringBuilder *out, RxExpr **current, bool *has_value_decl)
 {
     if (current == NULL || *current == NULL || rx_expr_is_named_var(*current, "value"))
@@ -630,7 +644,7 @@ static bool rx_materialize_current_expr(RxStringBuilder *out, RxExpr **current, 
     }
 
     bool ok = false;
-    if (*has_value_decl)
+    if (*has_value_decl || rx_expr_uses_named_var(*current, "value"))
     {
         ok = rx_string_builder_append(out, "        value = ")
             && rx_emit_expr(out, *current)
@@ -651,6 +665,36 @@ static bool rx_materialize_current_expr(RxStringBuilder *out, RxExpr **current, 
     rx_free_expr(*current);
     *current = rx_new_var("value");
     return *current != NULL;
+}
+
+static bool pipeline_has_breaking_op(const RxPlannerIrPipeline *pipeline)
+{
+    for (int index = 0; index < pipeline->op_count; ++index)
+    {
+        switch (pipeline->ops[index].kind)
+        {
+            case RX_OP_APPLY_TAKE:
+            case RX_OP_APPLY_TAKE_WHILE:
+            case RX_OP_APPLY_FIRST:
+                return true;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+static intptr_t op_literal_value(const RxPlannerIrOp *op)
+{
+    if (op == NULL || op->stage == NULL || op->stage->primary_argument.kind != RX_BINDING_LITERAL)
+    {
+        return 0;
+    }
+    if (op->stage->primary_argument.as.literal.kind == RX_LITERAL_LONG)
+    {
+        return (intptr_t)op->stage->primary_argument.as.literal.as.long_value;
+    }
+    return (intptr_t)op->stage->primary_argument.as.literal.as.int_value;
 }
 
 static char *strip_return_wrapper(const char *expr)
@@ -799,11 +843,20 @@ static bool try_parse_function_expression(
 }
 
 bool rx_try_emit_graph_optimized_loop_body(
-    const RxLoweredPipeline *pipeline,
+    const RxPlannerIrPipeline *pipeline,
     const RxCCodegenOptions *options,
     RxStringBuilder *out)
 {
-    RxExpr *current = pipeline->source_kind == RX_LOOP_SOURCE_RANGE ? rx_new_var("src") : NULL;
+    if (pipeline->source_kind == RX_LOOP_SOURCE_EXTERNAL_BUFFER
+        || pipeline->source_kind == RX_LOOP_SOURCE_EXTERNAL_WINDOW)
+    {
+        return false;
+    }
+    RxExpr *current =
+        (pipeline->source_kind == RX_LOOP_SOURCE_RANGE
+            || pipeline->source_kind == RX_LOOP_SOURCE_SYNTHETIC_RECORDS)
+        ? rx_new_var("src")
+        : NULL;
     bool has_value_decl = false;
     bool ok = true;
     if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_MERGE_MAP_RANGE)
@@ -814,11 +867,32 @@ bool rx_try_emit_graph_optimized_loop_body(
             return false;
         }
     }
+    else if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_SYNTHETIC_RECORDS)
+    {
+        if (!rx_string_builder_append_format(
+                out,
+                "    for (intptr_t src = 1, zip_n = (intptr_t)%d < (intptr_t)%d ? (intptr_t)%d : (intptr_t)%d; src <= zip_n; ++src) {\n",
+                pipeline->source_count,
+                pipeline->source_inner_n,
+                pipeline->source_count,
+                pipeline->source_inner_n))
+        {
+            return false;
+        }
+    }
+    else if (pipeline->source_kind == RX_LOOP_SOURCE_SYNTHETIC_RECORDS)
+    {
+        if (!rx_string_builder_append_format(out, "    for (intptr_t src = 1; src <= (intptr_t)%d; ++src) {\n", pipeline->source_count))
+        {
+            return false;
+        }
+    }
     else if (!rx_string_builder_append(out, "    for (intptr_t src = 1; src <= N; ++src) {\n"))
     {
         return false;
     }
-    if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_RANGE)
+    if (pipeline->source_kind == RX_LOOP_SOURCE_ZIP_RANGE
+        || pipeline->source_kind == RX_LOOP_SOURCE_ZIP_SYNTHETIC_RECORDS)
     {
         ok = rx_string_builder_append(out, "        intptr_t left = src;\n")
             && rx_string_builder_append(out, "        intptr_t right = src;\n");
@@ -833,10 +907,16 @@ bool rx_try_emit_graph_optimized_loop_body(
         rx_free_expr(current);
         return false;
     }
+    if (pipeline_has_breaking_op(pipeline)
+        && !rx_string_builder_append(out, "        bool should_break = false;\n"))
+    {
+        rx_free_expr(current);
+        return false;
+    }
 
     for (int index = 0; index < pipeline->op_count; ++index)
     {
-        const RxLoopOp *op = &pipeline->ops[index];
+        const RxPlannerIrOp *op = &pipeline->ops[index];
         const char *fn = op->stage != NULL && op->stage->primary_argument.kind == RX_BINDING_FUNCTION_NAME
             ? op->stage->primary_argument.as.function_name
             : NULL;
@@ -881,6 +961,20 @@ bool rx_try_emit_graph_optimized_loop_body(
                 has_value_decl = false;
                 break;
             }
+            case RX_OP_CALL_FILTER:
+            {
+                ok = rx_materialize_current_expr(out, &current, &has_value_decl);
+                if (!ok) { break; }
+                const char *params[] = { "raw" };
+                RxExpr *args[] = { current };
+                ok = try_parse_function_expression(options->helper_source_text, fn, params, args, 1, &expr);
+                if (!ok) { break; }
+                ok = rx_string_builder_append(out, "        if (!(")
+                    && rx_emit_expr(out, expr)
+                    && rx_string_builder_append(out, ")) { continue; }\n");
+                rx_free_expr(expr);
+                break;
+            }
             case RX_OP_CALL_SCAN:
             {
                 const char *params[] = { "raw_accum", "raw_next" };
@@ -896,6 +990,53 @@ bool rx_try_emit_graph_optimized_loop_body(
                 has_value_decl = false;
                 rx_free_expr(expr);
                 expr = NULL;
+                break;
+            }
+            case RX_OP_CALL_REDUCE:
+            {
+                const char *params[] = { "raw_accum", "raw_next" };
+                RxExpr *args[] = { rx_new_var(pipeline->state_slots[op->state_slot_index].name), current };
+                ok = try_parse_function_expression(options->helper_source_text, fn, params, args, 2, &expr);
+                rx_free_expr(args[0]);
+                if (!ok) { break; }
+                ok = rx_string_builder_append_format(out, "        %s = ", pipeline->state_slots[op->state_slot_index].name)
+                    && rx_emit_expr(out, expr)
+                    && rx_string_builder_append(out, ";\n");
+                rx_free_expr(current);
+                current = rx_new_var(pipeline->state_slots[op->state_slot_index].name);
+                has_value_decl = false;
+                rx_free_expr(expr);
+                expr = NULL;
+                break;
+            }
+            case RX_OP_APPLY_TAKE:
+            {
+                intptr_t limit = op_literal_value(op);
+                ok = rx_string_builder_append_format(out, "        if (%s >= %" PRIdPTR ") { break; }\n", pipeline->state_slots[op->state_slot_index].name, limit)
+                    && rx_string_builder_append_format(out, "        %s += 1;\n", pipeline->state_slots[op->state_slot_index].name)
+                    && rx_string_builder_append_format(out, "        if (%s >= %" PRIdPTR ") { should_break = true; }\n", pipeline->state_slots[op->state_slot_index].name, limit);
+                break;
+            }
+            case RX_OP_APPLY_SKIP:
+            {
+                intptr_t limit = op_literal_value(op);
+                ok = rx_string_builder_append_format(out, "        if (%s < %" PRIdPTR ") {\n", pipeline->state_slots[op->state_slot_index].name, limit)
+                    && rx_string_builder_append_format(out, "            %s += 1;\n", pipeline->state_slots[op->state_slot_index].name)
+                    && rx_string_builder_append(out, "            continue;\n        }\n");
+                break;
+            }
+            case RX_OP_APPLY_TAKE_WHILE:
+            {
+                ok = rx_materialize_current_expr(out, &current, &has_value_decl);
+                if (!ok) { break; }
+                const char *params[] = { "raw" };
+                RxExpr *args[] = { current };
+                ok = try_parse_function_expression(options->helper_source_text, fn, params, args, 1, &expr);
+                if (!ok) { break; }
+                ok = rx_string_builder_append(out, "        if (!(")
+                    && rx_emit_expr(out, expr)
+                    && rx_string_builder_append(out, ")) { break; }\n");
+                rx_free_expr(expr);
                 break;
             }
             case RX_OP_APPLY_DISTINCT_UNTIL_CHANGED:
@@ -938,6 +1079,10 @@ bool rx_try_emit_graph_optimized_loop_body(
                     && rx_string_builder_append(out, ";\n")
                     && rx_string_builder_append_format(out, "        %s = true;\n", pipeline->state_slots[op->aux_state_slot_index].name);
                 break;
+            case RX_OP_APPLY_FIRST:
+                ok = rx_materialize_current_expr(out, &current, &has_value_decl)
+                    && rx_string_builder_append(out, "        should_break = true;\n");
+                break;
             default:
                 ok = false;
                 break;
@@ -948,6 +1093,13 @@ bool rx_try_emit_graph_optimized_loop_body(
             rx_free_expr(current);
             return false;
         }
+    }
+
+    if (pipeline_has_breaking_op(pipeline)
+        && !rx_string_builder_append(out, "        if (should_break) { break; }\n"))
+    {
+        rx_free_expr(current);
+        return false;
     }
 
     rx_free_expr(current);

@@ -34,6 +34,10 @@ static RxPlannedStageKind planned_stage_kind(const RxFunctionSignature *signatur
     {
         return RX_STAGE_MAP;
     }
+    if (strcmp(signature->name, "mapInto") == 0)
+    {
+        return RX_STAGE_MAP_INTO;
+    }
     if (strcmp(signature->name, "pairMap") == 0)
     {
         return RX_STAGE_PAIR_MAP;
@@ -54,9 +58,17 @@ static RxPlannedStageKind planned_stage_kind(const RxFunctionSignature *signatur
     {
         return RX_STAGE_SCAN_FROM;
     }
+    if (strcmp(signature->name, "scanMut") == 0)
+    {
+        return RX_STAGE_SCAN_MUT;
+    }
     if (strcmp(signature->name, "reduce") == 0)
     {
         return RX_STAGE_REDUCE;
+    }
+    if (strcmp(signature->name, "reduceMut") == 0)
+    {
+        return RX_STAGE_REDUCE_MUT;
     }
     if (strcmp(signature->name, "mapTo") == 0)
     {
@@ -97,6 +109,10 @@ static bool source_is_self_contained(const RxSourceCall *source)
 {
     return source->signature != NULL
         && (strcmp(source->signature->name, "range") == 0
+            || strcmp(source->signature->name, "synthetic_records") == 0
+            || strcmp(source->signature->name, "external_buffer") == 0
+            || strcmp(source->signature->name, "external_window") == 0
+            || strcmp(source->signature->name, "zip") == 0
             || strcmp(source->signature->name, "zip_range") == 0
             || strcmp(source->signature->name, "zip_merge_map_range") == 0);
 }
@@ -111,12 +127,15 @@ static bool stage_is_self_contained(const RxStageCall *stage)
     switch (planned_stage_kind(stage->signature))
     {
         case RX_STAGE_MAP:
+        case RX_STAGE_MAP_INTO:
         case RX_STAGE_PAIR_MAP:
         case RX_STAGE_TRIPLE_MAP:
         case RX_STAGE_FILTER:
         case RX_STAGE_SCAN:
         case RX_STAGE_SCAN_FROM:
+        case RX_STAGE_SCAN_MUT:
         case RX_STAGE_REDUCE:
+        case RX_STAGE_REDUCE_MUT:
         case RX_STAGE_MAP_TO:
         case RX_STAGE_TAKE:
         case RX_STAGE_SKIP:
@@ -163,7 +182,7 @@ bool rx_build_execution_plan(
             if (!append_diag(
                     diagnostics,
                     RX_DIAG_UNSUPPORTED_SOURCE,
-                    "Only self-contained range()/zip sources are supported in the planner backend",
+                    "Only self-contained range()/synthetic_records/zip sources are supported in the planner backend",
                     source_pipeline->source.signature != NULL ? source_pipeline->source.signature->name : NULL,
                     pipeline_index,
                     -1))
@@ -230,6 +249,7 @@ bool rx_build_execution_plan(
             }
 
             if ((planned_stage->kind == RX_STAGE_REDUCE
+                    || planned_stage->kind == RX_STAGE_REDUCE_MUT
                     || planned_stage->kind == RX_STAGE_LAST
                     || planned_stage->kind == RX_STAGE_FIRST)
                 && stage_index != source_pipeline->stage_count - 1)
@@ -242,6 +262,26 @@ bool rx_build_execution_plan(
                         stage->signature != NULL ? stage->signature->name : NULL,
                         pipeline_index,
                         stage_index))
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (planned->transpile_candidate
+            && source_pipeline->source.signature != NULL
+            && strcmp(source_pipeline->source.signature->name, "zip") == 0)
+        {
+            if (source_pipeline->stage_count == 0 || planned->stages[0].kind != RX_STAGE_PAIR_MAP)
+            {
+                planned->transpile_candidate = false;
+                if (!append_diag(
+                        diagnostics,
+                        RX_DIAG_UNLOWERABLE_PIPELINE,
+                        "zip planner pipelines must start with pairMap to become scalar",
+                        planned->name,
+                        pipeline_index,
+                        0))
                 {
                     return false;
                 }
